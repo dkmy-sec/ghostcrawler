@@ -1,0 +1,5 @@
+
+<svg xmlns="http://www.w3.org/2000/svg" width="150" height="20">
+  <rect width="150" height="20" fill="#0f0f23"/>
+  <text x="75" y="14" fill="#00ffcc" font-family="monospace" font-size="12" text-anchor="middle">Scan Completed</text>
+</svg>

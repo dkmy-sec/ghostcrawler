@@ -1,0 +1,6 @@
+requests_tor
+beautifulsoup4
+streamlit
+whoosh
+matplotlib
+rich
