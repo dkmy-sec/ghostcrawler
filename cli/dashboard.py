@@ -59,7 +59,7 @@ st.subheader("Search Dark Web Index")
 query = st.text_input("Enter keyword (e.g. email, domain, term)")
 
 if query:
-    if INDEX_DIR.exists():
+    if INDEX_DIR.exists() and exists_in(INDEX_DIR):
         ix = open_dir(INDEX_DIR)
         with ix.searcher() as searcher:
             parser = QueryParser("body", ix.schema)
@@ -72,7 +72,7 @@ if query:
                     st.write(f"**{r['title']}**")
                     st.caption(r["url"])
     else:
-        st.error("Search index not found. Run a scan to create it.")
+        st.warning("Search index not found. Run a scan first.")
 
 
 # --- WATCHLIST EDITOR ---
