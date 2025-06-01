@@ -23,3 +23,43 @@
 git clone https://github.com/yourhandle/ghostcrawler.git
 cd ghostcrawler
 pip install -r requirements.txt
+```
+Requires: tor, python3, streamlit, requests_tor, whoosh
+
+---
+
+### 🚀 Run a Scan
+
+```bash
+python cli/run_scan.py
+```
+
+---
+
+### 🧭 Launch the Dashboard
+
+```bash
+streamlit run cli/dashboard.py
+```
+
+---
+### 📂 Watchlist Format
+
+```json
+{
+  "emails": ["you@example.com"],
+  "ssns": ["123-45-6789"],
+  "credit_cards": ["4111 1111 1111 1111"],
+  "company": ["Your Company Name"]
+}
+```
+
+---
+
+### 🛡️ Legal & Ethical
+This toolkit is for ***educational*** and ***defensive cybersecurity*** purposes only. Do not use it to access illegal content.
+
+
+---
+
+### 👤 Built by Kei Nova
