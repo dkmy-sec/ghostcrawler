@@ -63,3 +63,13 @@ This toolkit is for ***educational*** and ***defensive cybersecurity*** purposes
 ---
 
 ### 👤 Built by Kei Nova
+
+---
+
+### 📝 To-Do Tasks
+- [ ] Add instructions on getting tor on Windows/Nix/MacOS
+- [ ] PDF Reports
+- [ ] Threat Frequency Charts
+- [ ] CSV + Excel alert export
+- [ ] Mass `.onion` scanning engine
+- [ ] Go Public at some point.  Once totally dialed in. 

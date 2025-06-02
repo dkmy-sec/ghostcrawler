@@ -18,6 +18,7 @@ REPORT_PATH = LOG_DIR / "threat_report.md"
 
 # --- PAGE SETTINGS ---
 st.set_page_config(page_title="DarkWeb Intel Dashboard", layout="wide")
+st.title("👻 ghostcrawler")
 st.title("DarkWeb Threat Intel Dashboard")
 st.markdown("Stay vigilant in the neon abyss. Track your exposure on the dark web.")
 
@@ -100,4 +101,4 @@ if query:
 
 # --- FOOTER ---
 st.markdown("---")
-st.caption("Cyberpunk-style dark web awareness dashboard. Built with love & paranoia.")
+st.caption("Cyberpunk-style dark web awareness dashboard. Built with love & paranoia. by Kei Nova")
