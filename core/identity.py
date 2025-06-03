@@ -1,4 +1,6 @@
-def rotate_identity(session):
+from requests_tor import RequestsTor
+
+def rotate_identity(session: RequestsTor):
     try:
         session.reset_identity()
         print("[~] Tor identity changed.")

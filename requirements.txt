@@ -4,3 +4,4 @@ streamlit
 whoosh
 matplotlib
 rich
+fpdf2
