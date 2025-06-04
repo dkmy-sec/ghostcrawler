@@ -1,67 +1,88 @@
-# crawler logic
 import os
+import re
 import json
-from urllib.parse import urlparse, urljoin
+import threading
+from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from requests_tor import RequestsTor
-from core.scanner import scan
 from core.identity import rotate_identity
+from pathlib import Path
+from datetime import datetime
 
-# Configs
-EXPORT_DIR = "data"
-SNAPSHOT_DIR = os.path.join(EXPORT_DIR, "snapshots")
-LOG_PATH = os.path.join(EXPORT_DIR, "logs", "alerts.json")
+# Setup
+WATCHLIST_PATH = Path("data/watchlist.json")
+SNAPSHOT_DIR = Path("data/snapshots")
+ALERTS_PATH = Path("data/alerts.json")
+SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
-os.makedirs(SNAPSHOT_DIR, exist_ok=True)
-os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
+# Load watchlist
+with open(WATCHLIST_PATH) as f:
+    watchlist = json.load(f)
+    keywords = [item for sub in watchlist.values() for item in sub]
 
-session = RequestsTor(tor_ports=(9050,), tor_cport=9051)
-visited = set()
-alerts = []
+# Initialize shared alert log
+lock = threading.Lock()
+if ALERTS_PATH.exists():
+    with open(ALERTS_PATH) as f:
+        alerts = json.load(f)
+else:
+    alerts = []
 
-def is_onion(url):
-    hostname = urlparse(url).hostname
-    return hostname and hostname.endswith(".onion")
+def crawl_onion(url, session, rotate_every=5):
+    visited = set()
+    to_visit = [url]
+    hits = []
+    counter = 0
 
-def save_snapshot(url, html):
-    hostname = urlparse(url).hostname.replace(".", "_")
-    with open(f"{SNAPSHOT_DIR}/{hostname}.html", "w", encoding="utf-8") as f:
-        f.write(html)
+    while to_visit:
+        current = to_visit.pop()
+        if current in visited or not current.startswith("http"):
+            continue
 
-def crawl_pages(start_url, watchlist, max_depth=3, auto_rotate=True):
-    def crawl(url, depth):
-        if url in visited or depth > max_depth:
-            return
-        visited.add(url)
+        if counter > 0 and counter % rotate_every == 0:
+            rotate_identity(session)
+        counter += 1
 
         try:
-            print(f"[+] Crawling: {url}")
-            r = session.get(url, timeout=30)
-            html = r.text
-            soup = BeautifulSoup(html, "html.parser")
-            save_snapshot(url, html)
+            response = session.get(current, timeout=15)
+            soup = BeautifulSoup(response.text, "html.parser")
+            text = soup.get_text()
 
-            matches = scan(html, watchlist)
-            if matches:
-                print(f"[!] ALERT: Sensitive data found on {url}")
-                alerts.append({"url": url, "matches": matches})
-                for m in matches:
-                    print("   ->", m)
+            found = [kw for kw in keywords if re.search(re.escape(kw), text, re.IGNORECASE)]
+            if found:
+                print(f"[+] Match on {current}: {found}")
+                with lock:
+                    alerts.append({
+                        "url": current,
+                        "base": url,
+                        "matched": found,
+                        "timestamp": datetime.utcnow().isoformat()
+                    })
 
-            for a in soup.find_all("a", href=True):
-                link = urljoin(url, a["href"])
-                if is_onion(link):
-                    crawl(link, depth + 1)
+            # Save snapshot
+            host = urlparse(url).netloc
+            filename = f"{host}_{datetime.utcnow().timestamp()}.html"
+            with open(SNAPSHOT_DIR / filename, "w", encoding="utf-8") as f:
+                f.write(response.text)
 
-            if auto_rotate and len(visited) % 5 == 0:
-                rotate_identity(session)
+            visited.add(current)
+
+            # Enqueue new links
+            for link in soup.find_all("a", href=True):
+                abs_url = urljoin(current, link['href'])
+                if ".onion" in abs_url and abs_url not in visited:
+                    to_visit.append(abs_url)
 
         except Exception as e:
-            print(f"[x] Failed to crawl {url}: {e}")
+            print(f"[!] Error fetching {current}: {e}")
 
-    # Start crawl
-    crawl(start_url, 0)
+    # Save alert log
+    with lock:
+        with open(ALERTS_PATH, "w") as f:
+            json.dump(alerts, f, indent=2)
 
-    # Save alerts
-    with open(LOG_PATH, "w", encoding="utf-8") as f:
-        json.dump(alerts, f, indent=2)
+# Entry point for threading or CLI
+if __name__ == "__main__":
+    test_url = input("Enter a .onion URL to crawl: ").strip()
+    session = RequestsTor(tor_ports=(9050,), autochange_id=False)
+    crawl_onion(test_url, session)

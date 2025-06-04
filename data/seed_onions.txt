@@ -1,0 +1,14 @@
+"http://3g2upl4pq6kufc4m.onion",       # DuckDuckGo
+"http://duskgytldkxiuqc6.onion",       # ProPublica
+"http://msydqstlz2kzerdg.onion",       # SecureDrop
+"http://haystakvxad7wbk5.onion",       # Haystak Search
+"http://civ6riqsgw36gvmc.onion",       # Galaxy3
+"http://hss3uro2hsxfogfq.onion",       # Tor Project (mirror)
+"http://expyuzz4wqqyqhjn.onion",       # Tor Metrics
+"http://xfmro77i3lixucja.onion",       # Imperial Library Mirror
+"http://zlal32teyptf4tvi.onion",       # Riseup
+"http://cnkabvzujj3w4u4z.onion",       # OnionShare (demo)
+"http://pd44w5rxzyxp6joi.onion",       # Elude
+"http://privacy2zbidut4m.onion",       # PrivacyTools
+"http://deepdot35wvmeyd5.onion",       # DeepDotWeb (archived mirror)
+"http://zqktlwi4fecvo6ri.onion",       # HiddenWiki
