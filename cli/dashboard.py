@@ -123,6 +123,41 @@ if st.sidebar.button("Build Darknet Index"):
         st.sidebar.success("Index built successfully.")
 
 
+# --- One Button Mode ---
+st.subheader("‍🧙 One-Button Mode: Darknet Exposure Scan‍️")
+
+user_input = st.text_input("Enter your email, domain, or sensitive keyword:")
+
+if st.button("🔍 Search the Darknet"):
+    if not user_input:
+        st.warning("Please enter something to search")
+    else:
+        st.info("💾 Stage 1: Running mass .onion scan...")
+        subprocess.run(["python", "mass_onion_scanner.py"])
+        time.sleep(1)
+
+        st.info("🕷️ Stage 2: Running deep crawler on matched onions...")
+        subprocess.run(["python", "core/crawler.py"])
+        time.sleep(1)
+
+        st.info("📦 Stage 3: Building index from crawled snapshots...")
+        from core.search_engine import build_index
+        build_index()
+
+        st.info("🔍 Stage 4: Searching for exposures...")
+        results = search(user_input)
+        if results:
+            df = pd.DataFrame(results, columns=[".onion URL", "TimeStamp"])
+            st.success(f"💀 {len(results)} potential exposures found.")
+            st.dataframe(df)
+
+            with st.expander(": Export"):
+                st.download_button("Download as CSV", df.to_csv(index=False), "darknet_results.csv")
+                st.download_button("Download as JSON", df.to_json(orient="records"), "darknet_results.json")
+        else:
+            st.warning("⚠️ No exposures found in the current scan.")
+
+
 # --- Main Search Panel ---
 st.subheader("🔎 Darknet Search")
 query = st.text_input("Enter a keyword, email or phrase to search snapshots: ")
