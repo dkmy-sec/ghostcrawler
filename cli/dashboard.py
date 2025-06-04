@@ -1,16 +1,19 @@
-import streamlit as st
-from pathlib import Path
+import json
 import sqlite3
 import subprocess
 import threading
-import json
 import time
-from core.crawler import crawl_onion
-from requests_tor import RequestsTor
-from core.identity import rotate_identity
-from datetime import datetime
-from fpdf import FPDF
+
 import pandas as pd
+import streamlit as st
+from fpdf import FPDF
+from requests_tor import RequestsTor
+
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from core.crawler import crawl_onion
+from core.search_engine import build_index, search
 
 
 # Paths
@@ -19,12 +22,14 @@ SNAPSHOT_DIR = Path("data/snapshots")
 PDF_REPORT = Path("data/reports/threat_report.pdf")
 ALERTS_PATH = Path("data/alerts.json")
 
+
 # Session state config
 if "rotate_every" not in st.session_state:
     st.session_state.rotate_every = 5
 
 st.set_page_config(layout="wide")
-st.title("🧠 Ghostcrawler Darknet Intel Toolkit")
+st.title("👻 Ghostcrawler Darknet Intel Toolkit")
+
 
 # Sidebar Controls
 st.sidebar.header("🛠️ Controls")
@@ -33,6 +38,7 @@ st.sidebar.slider("Rotate Identity Every N Requests", 1, 20, st.session_state.ro
 WATCHLIST_PATH = Path("data/watchlist.json")
 
 st.sidebar.markdown("## 🧠 Edit Watchlist")
+
 
 # Load watchlist
 if WATCHLIST_PATH.exists():
@@ -64,6 +70,7 @@ if st.sidebar.button("🕷️ Run Mass .onion Scan"):
         subprocess.run(["python", "core/mass_onion_scanner.py"])
     st.success("Mass scan complete.")
 
+
 # --- Checklist for Deep Crawl ---
 st.sidebar.markdown("## 🎯 Deep Crawl Targets")
 onion_urls = []
@@ -76,6 +83,7 @@ if DB_PATH.exists():
     conn.close()
 
 selected_urls = st.sidebar.multiselect(f"Select .onions to Deep Crawl ({len(onion_urls)} found)", onion_urls)
+
 
 def run_crawlers(urls):
     progress = st.progress(0)
@@ -98,12 +106,39 @@ def run_crawlers(urls):
     st.success("Deep crawl complete.")
     generate_pdf_report()
 
+
 # --- Launch Crawl ---
 if st.sidebar.button("🚀 Deep Crawl Selected"):
     if selected_urls:
         run_crawlers(selected_urls)
     else:
         st.warning("No .onion URLs selected.")
+
+
+# --- Darknet Search ---
+st.sidebar.subheader("📦 Index Builder")
+if st.sidebar.button("Build Darknet Index"):
+    with st.spinner("Parsing snapshots and building index..."):
+        build_index()
+        st.sidebar.success("Index built successfully.")
+
+
+# --- Main Search Panel ---
+st.subheader("🔎 Darknet Search")
+query = st.text_input("Enter a keyword, email or phrase to search snapshots: ")
+if query:
+    with st.spinner(f"Searching indexed content for: {query}..."):
+        results = search(query)
+        if results:
+            df = pd.DataFrame(results, columns=[".onion URL", "TimeStamp"])
+            st.sucess(f"Found {len(results)} results.")
+            st.dataframe(df)
+            with st.expander(': Export'):
+                st.download_button("Download as CSV", df.to_csv(index=False), "darknet_results.csv")
+                st.download_button("Download as JSON", df.to_json(orient="records"), "darknet_results.json")
+        else:
+            st.warning("No matches found.")
+
 
 # --- Snapshot Viewer ---
 st.subheader("📄 HTML Snapshots")
@@ -122,6 +157,7 @@ if PDF_REPORT.exists():
         st.download_button("Download Threat Report PDF", f, file_name="threat_report.pdf")
 else:
     st.info("No threat report generated yet.")
+
 
 # --- Generate PDF Function ---
 def generate_pdf_report():
@@ -149,6 +185,7 @@ def generate_pdf_report():
     PDF_REPORT.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(PDF_REPORT))
 
+
 st.subheader("🚨 Threat Alerts")
 ALERTS_PATH = Path("data/alerts.json")
 
@@ -164,3 +201,7 @@ if ALERTS_PATH.exists():
         st.info("No alerts yet. Run a scan.")
 else:
     st.info("No alerts file found.")
+
+
+# --- Footer ---
+st.markdown("<div class=footer>Made with 💌 and paranoia by Kei Nova ©️ 2025 </div>", unsafe_allow_html=True)

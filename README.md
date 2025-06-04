@@ -68,8 +68,8 @@ This toolkit is for ***educational*** and ***defensive cybersecurity*** purposes
 
 ### 📝 To-Do Tasks
 - [ ] Add instructions on getting tor on Windows/Nix/MacOS
-- [ ] PDF Reports
+- [ x ] PDF Reports
 - [ ] Threat Frequency Charts
 - [ ] CSV + Excel alert export
-- [ ] Mass `.onion` scanning engine
+- [ x ] Mass `.onion` scanning engine
 - [ ] Go Public at some point.  Once totally dialed in. 

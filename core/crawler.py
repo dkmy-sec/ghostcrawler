@@ -1,13 +1,14 @@
-import os
-import re
 import json
+import re
 import threading
+from datetime import datetime
+from pathlib import Path
 from urllib.parse import urljoin, urlparse
+
 from bs4 import BeautifulSoup
 from requests_tor import RequestsTor
+
 from core.identity import rotate_identity
-from pathlib import Path
-from datetime import datetime
 
 # Setup
 WATCHLIST_PATH = Path("data/watchlist.json")
@@ -27,6 +28,7 @@ if ALERTS_PATH.exists():
         alerts = json.load(f)
 else:
     alerts = []
+
 
 def crawl_onion(url, session, rotate_every=5):
     visited = set()
@@ -80,6 +82,7 @@ def crawl_onion(url, session, rotate_every=5):
     with lock:
         with open(ALERTS_PATH, "w") as f:
             json.dump(alerts, f, indent=2)
+
 
 # Entry point for threading or CLI
 if __name__ == "__main__":
