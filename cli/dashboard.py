@@ -35,6 +35,29 @@ st.title("👻 Ghostcrawler Darknet Intel Toolkit")
 st.sidebar.header("🛠️ Controls")
 st.sidebar.slider("Rotate Identity Every N Requests", 1, 20, st.session_state.rotate_every, key="rotate_every")
 
+
+# Refresh Aggregation Control
+st.markdown("## 🧅 Seed Aggregation Control")
+
+# Refresh Aggregated Seeds
+if st.button("⚡ Refresh Aggregated Seeds"):
+    with st.spinner("Running aggregation module..."):
+        subprocess.run(["python", "aggregate_feeds.py"])
+    st.success("Seed list and source DB updated!")
+
+# Onion source breakdown stats
+conn = sqlite3.connect("data/onion_sources.db")
+df = pd.read_sql_query("SELECT tag, COUNT(*) as count FROM onions GROUP BY tag", conn)
+conn.close()
+
+if not df.empty:
+    st.markdown("### 🔍 Onion Source Breakdown")
+    st.dataframe(df, use_container_width=True)
+else:
+    st.warning("No entries found in onion_sources.db yet.")
+
+
+# Edit Watchlist Sidebar
 WATCHLIST_PATH = Path("data/watchlist.json")
 
 st.sidebar.markdown("## 🧠 Edit Watchlist")

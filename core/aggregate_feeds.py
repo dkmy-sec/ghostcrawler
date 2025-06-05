@@ -84,3 +84,18 @@ for url in GITHUB_RAW_SOURCES:
 
 
 # Pull from Reddit post HTML pages (can switch to PRAW later)
+for url in REDDIT_THREAD_URLS:
+    print(f"[Reddit] Scraping {url}")
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        soup = BeautifulSoup(resp.text, "html.parser")
+        text = soup.get_text()
+        links = extract_onions(text)
+        save_onions(links, "reddit")
+    except Exception as e:
+        print(f"[!] Reddit fetch failed: {e}")
+
+conn.commit()
+conn.close()
+print("[✓] Onion aggregation complete.")
