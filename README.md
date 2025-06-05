@@ -14,7 +14,8 @@
 - 🕵️ Alerts you to leaks via CLI or dashboard
 - 🔍 Full-text search on indexed `.onion` sites
 - 📊 Streamlit frontend for threat visibility
-
+- 🧙‍♂️ Aggregated super list of onion sites `seed_onions.txt`
+- 
 ---
 
 ### 🧪 Install
@@ -73,3 +74,5 @@ This toolkit is for ***educational*** and ***defensive cybersecurity*** purposes
 - [ ] CSV + Excel alert export
 - [ x ] Mass `.onion` scanning engine
 - [ ] Go Public at some point.  Once totally dialed in. 
+- [ ] Buiding my own Darkweb Aggregator to my own seed_onions.txt list
+- [ ] Add clearnet into the mix.
