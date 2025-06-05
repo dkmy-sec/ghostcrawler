@@ -40,5 +40,5 @@ def search(query_string):
     qp = QueryParser("content", ix.schema)
     q = qp.parse(query_string)
     with ix.searcher() as s:
-        results = s.search(q, limite=20)
+        results = s.search(q, limit=20)
         return [(r['url'], r['timestamp']) for r in results]
