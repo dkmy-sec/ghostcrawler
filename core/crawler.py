@@ -76,6 +76,40 @@ def crawl_onion(url):
             "error": str(e)
         }
 
+
+import threading
+from queue import Queue
+
+# Optional: limit concurrency to prevent overload or bans
+MAX_THREADS = 10
+onion_queue = Queue()
+
+def threaded_worker():
+    while not onion_queue.empty():
+        onion_url = onion_queue.get()
+        result = crawl_onion(onion_url)
+        if result.get("matches"):
+            print(f"[+] {onion_url} matched: {result['matches']}")
+        elif result.get("error"):
+            print(f"[!] {onion_url} failed: {result['error']}")
+        onion_queue.task_done()
+
+def threaded_crawl(onion_list):
+    for url in onion_list:
+        onion_queue.put(url)
+
+    threads = []
+    for _ in range(min(MAX_THREADS, len(onion_list))):
+        t = threading.Thread(target=threaded_worker)
+        t.daemon = True
+        t.start()
+        threads.append(t)
+
+    onion_queue.join()
+    for t in threads:
+        t.join()
+
+
 # Optional: CLI entrypoint for testing
 if __name__ == "__main__":
     test_url = "http://exampleonion123.onion"
