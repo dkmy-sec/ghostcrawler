@@ -2,6 +2,9 @@ from requests_tor import RequestsTor
 import re
 import sqlite3
 from pathlib import Path
+import sys
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from core.identity import rotate_identity
 
 
 ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
@@ -47,7 +50,7 @@ CREATE TABLE IF NOT EXISTS onions (
 
 
 # Setup Tor session with optional identity rotation
-session = RequestsTor(tor_ports=(9050), autochange_id=False)
+session = RequestsTor(tor_ports=(9050,), autochange_id=False)
 rotate_interval = 20
 counter = 0
 

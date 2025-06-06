@@ -4,21 +4,24 @@ import sqlite3
 import threading
 from pathlib import Path
 from queue import Queue
+import sys
 
 from bs4 import BeautifulSoup
 from requests_tor import RequestsTor
-
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.identity import rotate_identity
+
 
 ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
 SNAPSHOT_DIR = Path("data/snapshots")
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
+
 WATCHLIST_PATH = Path("data/watchlist.json")
 with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
     watchlist = json.load(f)
     keywords = [item for sublist in watchlist.values() for item in sublist]
+
 
 # DB for discovered onions
 DB_PATH = Path("data/onion_sources.db")
@@ -36,8 +39,9 @@ cursor.execute("""
                )
                """)
 
+
 # Setup Tor session with optional identity rotation
-session = RequestsTor(tor_ports=(9050), autochange_id=False)
+session = RequestsTor(tor_ports=(9050,), autochange_id=False)
 rotate_interval = 5
 counter = 0
 
@@ -64,6 +68,7 @@ def crawl_onion(url):
         print(f"[-] Crawling {url} via Tor")
         headers = {'User-Agent': 'Ghostcrawler/1.0'}
         response = session.get(url, headers=headers, timeout=20)
+        print(f"[-] Status: {response.status_code}")
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text()
 
