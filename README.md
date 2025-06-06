@@ -49,10 +49,11 @@ streamlit run cli/dashboard.py
 ```json
 {
   "emails": ["you@example.com"],
-  "ssns": ["123-45-6789"],
-  "credit_cards": ["4111 1111 1111 1111"],
-  "company": ["Your Company Name"]
+  "keywords": ["leeaks, ssn, private"],
+  "domains": ["google.com"]
 }
+
+supports: comma seperated emails, keywords, and dowmains
 ```
 
 ---

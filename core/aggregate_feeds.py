@@ -17,8 +17,9 @@ ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
 # Github repos with raw onion data
 GITHUB_RAW_SOURCES = [
     "https://raw.githubusercontent.com/alecmuffett/real-world-onion-sites/master/README.md",
-    "https://raw.githubusercontent.com/nyxnor/onion_links/main/README.md",
-    "https://raw.githubusercontent.com/s-rah/onionscan/master/res/onions/onions.txt"
+    "https://raw.githubusercontent.com/Giddyspurz/Dark-Web-Links/refs/heads/main/Ransomware-Sites.txt",
+    "https://raw.githubusercontent.com/Giddyspurz/Dark-Web-Links/refs/heads/main/Marketplaces.txt",
+
 ]
 
 
@@ -95,6 +96,7 @@ for url in REDDIT_THREAD_URLS:
         save_onions(links, "reddit")
     except Exception as e:
         print(f"[!] Reddit fetch failed: {e}")
+
 
 conn.commit()
 conn.close()

@@ -38,4 +38,4 @@ def scan(html: str, watchlist: dict) -> list:
             matches.append(f"CREDIT_CARD pattern detected: {match} (regex)")
 
     return matches
-hes
+

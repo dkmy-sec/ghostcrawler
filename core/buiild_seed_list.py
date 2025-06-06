@@ -1,6 +1,4 @@
-import requests
 from requests_tor import RequestsTor
-from bs4 import BeautifulSoup
 import re
 import sqlite3
 from pathlib import Path
@@ -48,6 +46,12 @@ CREATE TABLE IF NOT EXISTS onions (
 """)
 
 
+# Setup Tor session with optional identity rotation
+session = RequestsTor(tor_ports=(9050), autochange_id=False)
+rotate_interval = 20
+counter = 0
+
+
 def extract_onions(text):
     return list(set(re.findall(ONION_REGEX, text)))
 
@@ -66,8 +70,12 @@ def classify_onion(url):
 
 for source, url in sources.items():
     print(f"[+] Crawling {source} - {url}")
+    global counter
     try:
-        response = requests.get(url, headers=HEADERS, timeout=15)
+        if counter > 0 and counter % rotate_interval == 0:
+            rotate_identity(session)
+        counter += 1
+        response = session.get(url, headers=HEADERS, timeout=20)
         onions = extract_onions(response.text)
         for o in onions:
             tag = classify_onion(o)

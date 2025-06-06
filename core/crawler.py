@@ -1,11 +1,15 @@
-import requests
-from bs4 import BeautifulSoup
-import re
-import os
 import json
+import re
 import sqlite3
-from datetime import datetime
+import threading
 from pathlib import Path
+from queue import Queue
+
+from bs4 import BeautifulSoup
+from requests_tor import RequestsTor
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+from core.identity import rotate_identity
 
 ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
 SNAPSHOT_DIR = Path("data/snapshots")
@@ -21,18 +25,26 @@ DB_PATH = Path("data/onion_sources.db")
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 cursor.execute("""
-CREATE TABLE IF NOT EXISTS onions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url TEXT UNIQUE,
-    source TEXT,
-    tag TEXT,
-    live INTEGER DEFAULT 1,
-    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-)
-""")
+               CREATE TABLE IF NOT EXISTS onions
+               (
+                   id        INTEGER PRIMARY KEY AUTOINCREMENT,
+                   url       TEXT UNIQUE,
+                   source    TEXT,
+                   tag       TEXT,
+                   live      INTEGER   DEFAULT 1,
+                   last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+               )
+               """)
+
+# Setup Tor session with optional identity rotation
+session = RequestsTor(tor_ports=(9050), autochange_id=False)
+rotate_interval = 5
+counter = 0
+
 
 def extract_onions(text):
     return list(set(re.findall(ONION_REGEX, text)))
+
 
 def classify_onion(url):
     if "forum" in url: return "forum"
@@ -41,10 +53,17 @@ def classify_onion(url):
     if "leak" in url or "dump" in url: return "leak"
     return "unknown"
 
+
 def crawl_onion(url):
+    global counter
     try:
+        # Identity rotation every N requests
+        if counter > 0 and counter % rotate_interval == 0:
+            rotate_identity(session)
+        counter += 1
+        print(f"[-] Crawling {url} via Tor")
         headers = {'User-Agent': 'Ghostcrawler/1.0'}
-        response = requests.get(url, headers=headers, timeout=15)
+        response = session.get(url, headers=headers, timeout=20)
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text()
 
@@ -77,12 +96,10 @@ def crawl_onion(url):
         }
 
 
-import threading
-from queue import Queue
-
 # Optional: limit concurrency to prevent overload or bans
 MAX_THREADS = 10
 onion_queue = Queue()
+
 
 def threaded_worker():
     while not onion_queue.empty():
@@ -93,6 +110,7 @@ def threaded_worker():
         elif result.get("error"):
             print(f"[!] {onion_url} failed: {result['error']}")
         onion_queue.task_done()
+
 
 def threaded_crawl(onion_list):
     for url in onion_list:
