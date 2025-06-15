@@ -135,6 +135,6 @@ def threaded_crawl(onion_list):
 
 # Optional: CLI entrypoint for testing
 if __name__ == "__main__":
-    test_url = "http://exampleonion123.onion"
+    test_url = "http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/"
     result = crawl_onion(test_url)
     print(json.dumps(result, indent=2))

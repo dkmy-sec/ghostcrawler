@@ -14,6 +14,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.crawler import crawl_onion
 from core.search_engine import build_index, search
+from core.identity import rotate_identity
 
 
 # Paths
