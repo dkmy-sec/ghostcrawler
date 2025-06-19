@@ -1,18 +1,20 @@
-from requests_tor import RequestsTor
 import re
 import sqlite3
 from pathlib import Path
+from requests_tor import RequestsTor
 import sys
+
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.identity import rotate_identity
 
-
+# --- Constants ---
 ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
 HEADERS = {"User-Agent": "GhostcrawlerBot/1.0"}
-SAVE_PATH = Path("data/seed_onions.txt")
-DB_PATH = Path("data/onion_sources.db")
+SAVE_PATH = Path("../data/seed_onions.txt")
+DB_PATH = Path("../data/onion_sources.db")
+ROTATE_INTERVAL = 20
 
-
+# --- Verified Onion Sources ---
 sources = {
     "SysLeaks": "http://wa2y26bd7vw4xpy6hglnrnsrk54ouveaqxiuutjkejccqqnwgcryvuqd.onion/",
     "StrongholdPaste": "http://strongerw2ise74v3duebgsvug4mehyhlpa7f6kfwnas7zofs3kov7yd.onion/all",
@@ -28,15 +30,13 @@ sources = {
     "vormweb": "http://volkancfgpi4c7ghph6id2t7vcntenuly66qjt6oedwtjmyj4tkk5oqd.onion/",
     "excavator": "http://2fd6cemt4gmccflhm6imvdfvli3nf7zn6rfrwpsy7uhxrgbypvwf5fad.onion/",
     "torland": "http://torlgu6zhhtwe73fdu76uiswgnkfvukqfujofxjfo7vzoht2rndyhxyd.onion/",
-    # Add more aggregators as found
+    # Add more as needed
 }
 
-
+# --- Setup ---
 SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
-SAVE_PATH.write_text("") # Clean slate
+SAVE_PATH.touch(exist_ok=True)
 
-
-# SETUP DB
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 cursor.execute("""
@@ -44,26 +44,21 @@ CREATE TABLE IF NOT EXISTS onions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     url TEXT UNIQUE,
     source TEXT,
-    tag TEXT,
+    tag TEXT DEFAULT 'unknown',
     live INTEGER DEFAULT 1,
     last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 )
 """)
 
-
-# Setup Tor session with optional identity rotation
 session = RequestsTor(tor_ports=(9050,), autochange_id=False)
-rotate_interval = 20
 counter = 0
 
-
+# --- Utilities ---
 def extract_onions(text):
     return list(set(re.findall(ONION_REGEX, text)))
 
-
 def classify_onion(url):
-    # Primitive tagging based on patterns
-    if any(x in url for x in ["hub","forum","dread"]):
+    if any(x in url for x in ["hub", "forum", "dread"]):
         return "forum"
     if "paste" in url:
         return "paste"
@@ -73,23 +68,28 @@ def classify_onion(url):
         return "leak"
     return "unknown"
 
-for source, url in sources.items():
-    print(f"[+] Crawling {source} - {url}")
-    global counter
+# --- Crawl Sources ---
+for source_name, url in sources.items():
+    print(f"[+] Crawling {source_name}: {url}")
     try:
-        if counter > 0 and counter % rotate_interval == 0:
+        if counter > 0 and counter % ROTATE_INTERVAL == 0:
             rotate_identity(session)
         counter += 1
+
         response = session.get(url, headers=HEADERS, timeout=20)
         onions = extract_onions(response.text)
-        for o in onions:
-            tag = classify_onion(o)
-            SAVE_PATH.write_text(o + "\n", append=True)
-            cursor.execute("INSERT OR IGNORE INTO onions (url, source, tag) VALUES (?, ?, ?)", (o, source, tag))
+
+        for onion_url in onions:
+            tag = classify_onion(onion_url)
+            cursor.execute("INSERT OR IGNORE INTO onions (url, source, tag) VALUES (?, ?, ?)",
+                           (onion_url, source_name, tag))
+            with SAVE_PATH.open("a", encoding="utf-8") as f:
+                f.write(onion_url + "\n")
+
     except Exception as e:
-        print(f"[!] Error with {url}: {e}")
+        print(f"[!] Error crawling {url}: {e}")
 
-
+# --- Wrap-up ---
 conn.commit()
 conn.close()
-print("✓ Onion list updated and stored.")
+print("✓ Verified onion list updated.")
