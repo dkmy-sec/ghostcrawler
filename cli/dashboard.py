@@ -1,3 +1,4 @@
+
 import json
 import sqlite3
 import subprocess
@@ -16,13 +17,12 @@ from core.crawler import crawl_onion
 from core.search_engine import build_index, search
 from core.identity import rotate_identity
 
-
 # Paths
 DB_PATH = Path("data/onion_links.db")
 SNAPSHOT_DIR = Path("data/snapshots")
 PDF_REPORT = Path("data/reports/threat_report.pdf")
 ALERTS_PATH = Path("data/alerts.json")
-
+ONION_DB_PATH = Path("data/onion_sources.db").resolve()
 
 # Session state config
 if "rotate_every" not in st.session_state:
@@ -31,47 +31,41 @@ if "rotate_every" not in st.session_state:
 st.set_page_config(layout="wide")
 st.title("👻 Ghostcrawler Darknet Intel Toolkit")
 
-
 # Sidebar Controls
 st.sidebar.header("🛠️ Controls")
 st.sidebar.slider("Rotate Identity Every N Requests", 1, 20, st.session_state.rotate_every, key="rotate_every")
 
-
 # Refresh Aggregation Control
 st.markdown("## 🧅 Seed Aggregation Control")
 
-# Refresh Aggregated Seeds
 if st.button("⚡ Refresh Aggregated Seeds"):
     with st.spinner("Running aggregation module..."):
-        subprocess.run(["python", "aggregate_feeds.py"])
+        subprocess.run(["python", "core/aggregate_feeds.py"])
     st.success("Seed list and source DB updated!")
 
 # Onion source breakdown stats
-conn = sqlite3.connect("data/onion_sources.db")
-df = pd.read_sql_query("SELECT tag, COUNT(*) as count FROM onions GROUP BY tag", conn)
-conn.close()
+try:
+    conn = sqlite3.connect(str(ONION_DB_PATH))
+    df = pd.read_sql_query("SELECT tag, COUNT(*) as count FROM onions GROUP BY tag", conn)
+    conn.close()
 
-if not df.empty:
-    st.markdown("### 🔍 Onion Source Breakdown")
-    st.dataframe(df, use_container_width=True)
-else:
-    st.warning("No entries found in onion_sources.db yet.")
-
+    if not df.empty:
+        st.markdown("### 🔍 Onion Source Breakdown")
+        st.dataframe(df, use_container_width=True)
+    else:
+        st.warning("No entries found in onion_sources.db yet.")
+except Exception as e:
+    st.error(f"Failed to load onion source breakdown: {e}")
 
 # Edit Watchlist Sidebar
 WATCHLIST_PATH = Path("data/watchlist.json")
-
 st.sidebar.markdown("## 🧠 Edit Watchlist")
-
-
-# Load watchlist
 if WATCHLIST_PATH.exists():
     with open(WATCHLIST_PATH) as f:
         watchlist = json.load(f)
 else:
     watchlist = {"emails": [], "keywords": [], "domains": []}
 
-# Editable fields
 for category in watchlist:
     current = watchlist[category]
     new_list = st.sidebar.text_area(
@@ -81,24 +75,18 @@ for category in watchlist:
     )
     watchlist[category] = [x.strip() for x in new_list.split(",") if x.strip()]
 
-# Save button
 if st.sidebar.button("💾 Save Watchlist"):
     with open(WATCHLIST_PATH, "w") as f:
         json.dump(watchlist, f, indent=2)
     st.sidebar.success("Watchlist updated.")
 
-
-# --- Mass Scan Trigger ---
 if st.sidebar.button("🕷️ Run Mass .onion Scan"):
     with st.spinner("Scanning onion homepages..."):
         subprocess.run(["python", "core/mass_onion_scanner.py"])
     st.success("Mass scan complete.")
 
-
-# --- Checklist for Deep Crawl ---
 st.sidebar.markdown("## 🎯 Deep Crawl Targets")
 onion_urls = []
-
 if DB_PATH.exists():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -107,7 +95,6 @@ if DB_PATH.exists():
     conn.close()
 
 selected_urls = st.sidebar.multiselect(f"Select .onions to Deep Crawl ({len(onion_urls)} found)", onion_urls)
-
 
 def run_crawlers(urls):
     progress = st.progress(0)
@@ -130,26 +117,19 @@ def run_crawlers(urls):
     st.success("Deep crawl complete.")
     generate_pdf_report()
 
-
-# --- Launch Crawl ---
 if st.sidebar.button("🚀 Deep Crawl Selected"):
     if selected_urls:
         run_crawlers(selected_urls)
     else:
         st.warning("No .onion URLs selected.")
 
-
-# --- Darknet Search ---
 st.sidebar.subheader("📦 Index Builder")
 if st.sidebar.button("Build Darknet Index"):
     with st.spinner("Parsing snapshots and building index..."):
         build_index()
         st.sidebar.success("Index built successfully.")
 
-
-# --- One Button Mode ---
 st.subheader("‍🧙 One-Button Mode: Darknet Exposure Scan‍️")
-
 user_input = st.text_input("Enter your email, domain, or sensitive keyword:")
 
 if st.button("🔍 Search the Darknet"):
@@ -157,32 +137,25 @@ if st.button("🔍 Search the Darknet"):
         st.warning("Please enter something to search")
     else:
         st.info("💾 Stage 1: Running mass .onion scan...")
-        subprocess.run(["python", "mass_onion_scanner.py"])
+        subprocess.run(["python", "core/mass_onion_scanner.py"])
         time.sleep(1)
-
         st.info("🕷️ Stage 2: Running deep crawler on matched onions...")
         subprocess.run(["python", "core/crawler.py"])
         time.sleep(1)
-
         st.info("📦 Stage 3: Building index from crawled snapshots...")
-        from core.search_engine import build_index
         build_index()
-
         st.info("🔍 Stage 4: Searching for exposures...")
         results = search(user_input)
         if results:
             df = pd.DataFrame(results, columns=[".onion URL", "TimeStamp"])
             st.success(f"💀 {len(results)} potential exposures found.")
             st.dataframe(df)
-
             with st.expander(": Export"):
                 st.download_button("Download as CSV", df.to_csv(index=False), "darknet_results.csv")
                 st.download_button("Download as JSON", df.to_json(orient="records"), "darknet_results.json")
         else:
             st.warning("⚠️ No exposures found in the current scan.")
 
-
-# --- Main Search Panel ---
 st.subheader("🔎 Darknet Search")
 query = st.text_input("Enter a keyword, email or phrase to search snapshots: ")
 if query:
@@ -190,7 +163,7 @@ if query:
         results = search(query)
         if results:
             df = pd.DataFrame(results, columns=[".onion URL", "TimeStamp"])
-            st.sucess(f"Found {len(results)} results.")
+            st.success(f"Found {len(results)} results.")
             st.dataframe(df)
             with st.expander(': Export'):
                 st.download_button("Download as CSV", df.to_csv(index=False), "darknet_results.csv")
@@ -198,8 +171,6 @@ if query:
         else:
             st.warning("No matches found.")
 
-
-# --- Snapshot Viewer ---
 st.subheader("📄 HTML Snapshots")
 snap_files = sorted(SNAPSHOT_DIR.glob("*.html"))
 snap_names = [f.name for f in snap_files]
@@ -209,7 +180,6 @@ if snap_names:
         content = (SNAPSHOT_DIR / snap_select).read_text(encoding="utf-8")
         st.components.v1.html(content, height=500, scrolling=True)
 
-# --- PDF Viewer ---
 st.subheader("📄 Latest Threat PDF Report")
 if PDF_REPORT.exists():
     with open(PDF_REPORT, "rb") as f:
@@ -217,8 +187,6 @@ if PDF_REPORT.exists():
 else:
     st.info("No threat report generated yet.")
 
-
-# --- Generate PDF Function ---
 def generate_pdf_report():
     pdf = FPDF()
     pdf.add_page()
@@ -244,10 +212,7 @@ def generate_pdf_report():
     PDF_REPORT.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(PDF_REPORT))
 
-
 st.subheader("🚨 Threat Alerts")
-ALERTS_PATH = Path("data/alerts.json")
-
 if ALERTS_PATH.exists():
     with open(ALERTS_PATH) as f:
         alert_data = json.load(f)
@@ -261,6 +226,4 @@ if ALERTS_PATH.exists():
 else:
     st.info("No alerts file found.")
 
-
-# --- Footer ---
 st.markdown("<div class=footer>Made with 💌 and paranoia by Kei Nova ©️ 2025 </div>", unsafe_allow_html=True)
