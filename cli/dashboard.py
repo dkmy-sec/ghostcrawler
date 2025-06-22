@@ -16,13 +16,16 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.crawler import crawl_onion
 from core.search_engine import build_index, search
 from core.identity import rotate_identity
+from core.utils import DATA_DIR
+
 
 # Paths
-DB_PATH = Path("data/onion_links.db")
-SNAPSHOT_DIR = Path("data/snapshots")
-PDF_REPORT = Path("data/reports/threat_report.pdf")
-ALERTS_PATH = Path("data/alerts.json")
-ONION_DB_PATH = Path("data/onion_sources.db").resolve()
+PDF_REPORT = DATA_DIR / "data/reports/threat_report.pdf"
+DB_PATH = DATA_DIR / "onion_sources.db"
+SNAPSHOT_DIR = DATA_DIR / "snapshots"
+ALERTS_PATH = DATA_DIR / "alerts.json"
+WATCHLIST_PATH = DATA_DIR / "watchlist.json"
+
 
 # Session state config
 if "rotate_every" not in st.session_state:
@@ -45,7 +48,7 @@ if st.button("⚡ Refresh Aggregated Seeds"):
 
 # Onion source breakdown stats
 try:
-    conn = sqlite3.connect(str(ONION_DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH))
     df = pd.read_sql_query("SELECT tag, COUNT(*) as count FROM onions GROUP BY tag", conn)
     conn.close()
 
@@ -58,7 +61,7 @@ except Exception as e:
     st.error(f"Failed to load onion source breakdown: {e}")
 
 # Edit Watchlist Sidebar
-WATCHLIST_PATH = Path("data/watchlist.json")
+WATCHLIST_PATH = DATA_DIR / "watchlist.json"
 st.sidebar.markdown("## 🧠 Edit Watchlist")
 if WATCHLIST_PATH.exists():
     with open(WATCHLIST_PATH) as f:
@@ -90,7 +93,7 @@ onion_urls = []
 if DB_PATH.exists():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT url FROM onion_links")
+    cursor.execute("SELECT DISTINCT url FROM onions")
     onion_urls = [row[0] for row in cursor.fetchall()]
     conn.close()
 
@@ -172,13 +175,18 @@ if query:
             st.warning("No matches found.")
 
 st.subheader("📄 HTML Snapshots")
+SNAPSHOT_DIR = DATA_DIR / "snapshots"
 snap_files = sorted(SNAPSHOT_DIR.glob("*.html"))
-snap_names = [f.name for f in snap_files]
-if snap_names:
+
+if snap_files:
+    snap_names = [f.name for f in snap_files]
     snap_select = st.selectbox("Select snapshot to view", snap_names)
     if snap_select:
         content = (SNAPSHOT_DIR / snap_select).read_text(encoding="utf-8")
         st.components.v1.html(content, height=500, scrolling=True)
+else:
+    st.info("No snapshots found.")
+
 
 st.subheader("📄 Latest Threat PDF Report")
 if PDF_REPORT.exists():

@@ -49,6 +49,15 @@ sources = {
     "wikipage": "http://uquroyobsaquslaunwkz6bmc3wutpzvwe7mv62xeq64645a57bugnsyd.onion/",
     "gdark": "http://zb2jtkhnbvhkya3d46twv3g7lkobi4s62tjffqmafjibixk6pmq75did.onion/gdark/search.php",
     "metager": "http://metagerv65pwclop2rsfzg4jwowpavpwd6grhhlvdgsswvo6ii4akgyd.onion/",
+    "onion.taxi": "http://taxiwgvywwmvcd63cwvq4m5ubsgxtjl2hzkjdpfhjvwcslgy2rmmuoid.onion/",
+    "amnesia": "http://amnesia7u5odx5xbwtpnqk3edybgud5bmiagu75bnqx2crntw5kry7ad.onion/",
+    "nexus": "http://nexus3xpq52kd7fnobiwwndytystymajamfwoawhppn2wqgqetoucoyd.onion/",
+    "tortop": "http://tortopaik2kzc277jfuxmzvc74ekpdvfd7b3bkftkfvku2qiinbzlhid.onion/",
+    "navigator": "http://navigatorf3jbtpd65e6dobehgbcz6erpzwhzffuylgiqg4hcornygad.onion/",
+    "tormarks": "http://tormarksq5pj5sbdxilm24xpjupsn6t5ntz2gsiiy4xufukna5eno7id.onion/tormarks-online.html",
+    "torjet": "http://torjetp2atnulvrrhbbo6sidoxsvgxf4li5h3n2vu3uudn3tcoxl4ayd.onion/",
+    "onionking": "http://onionkimes2trn6zj73lvc2gd2myrphtp42zyctrqw7oyyuc7rbgj2ad.onion/",
+
     # Add more as needed
 }
 

@@ -1,54 +1,51 @@
-import json
-import re
-import sqlite3
-import threading
+import json, re, sqlite3, threading
 from pathlib import Path
 from queue import Queue
 import sys
 
 from bs4 import BeautifulSoup
 from requests_tor import RequestsTor
+
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.identity import rotate_identity
+from core.utils import DATA_DIR
 
+SAVE_PATH = DATA_DIR / "seed_onions.txt"
+SNAPSHOT_DIR = DATA_DIR / "snapshots"
+WATCHLIST_PATH = DATA_DIR / "watchlist.json"
+DB_PATH = DATA_DIR / "onion_sources.db"
 
-ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
-SNAPSHOT_DIR = Path("data/snapshots")
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
-
-WATCHLIST_PATH = Path("data/watchlist.json")
+# --- Watchlist ---
 with open(WATCHLIST_PATH, "r", encoding="utf-8") as f:
     watchlist = json.load(f)
     keywords = [item for sublist in watchlist.values() for item in sublist]
 
-
-# DB for discovered onions
-DB_PATH = Path("data/onion_sources.db")
+# --- DB ---
 conn = sqlite3.connect(DB_PATH)
 cursor = conn.cursor()
 cursor.execute("""
-               CREATE TABLE IF NOT EXISTS onions
-               (
-                   id        INTEGER PRIMARY KEY AUTOINCREMENT,
-                   url       TEXT UNIQUE,
-                   source    TEXT,
-                   tag       TEXT,
-                   live      INTEGER   DEFAULT 1,
-                   last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-               )
-               """)
+CREATE TABLE IF NOT EXISTS onions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url TEXT UNIQUE,
+    source TEXT,
+    tag TEXT,
+    live INTEGER DEFAULT 1,
+    last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    depth INTEGER DEFAULT 0
+)
+""")
+conn.commit()
 
-
-# Setup Tor session with optional identity rotation
 session = RequestsTor(tor_ports=(9050,), autochange_id=False)
 rotate_interval = 5
 counter = 0
 
+ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
 
 def extract_onions(text):
     return list(set(re.findall(ONION_REGEX, text)))
-
 
 def classify_onion(url):
     if "forum" in url: return "forum"
@@ -57,65 +54,63 @@ def classify_onion(url):
     if "leak" in url or "dump" in url: return "leak"
     return "unknown"
 
-
-def crawl_onion(url):
+def crawl_onion(url, depth=2, max_depth=3):
     global counter
     try:
-        # Identity rotation every N requests
         if counter > 0 and counter % rotate_interval == 0:
             rotate_identity(session)
         counter += 1
-        print(f"[-] Crawling {url} via Tor")
+
+        print(f"[-] Crawling {url} (depth {depth})")
         headers = {'User-Agent': 'Ghostcrawler/1.0'}
         response = session.get(url, headers=headers, timeout=20)
-        print(f"[-] Status: {response.status_code}")
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text()
 
-        # 🔎 Keyword matching
-        matches = [kw for kw in keywords if re.search(re.escape(kw), text, re.IGNORECASE)]
-
-        # 💾 Save snapshot
+        # Save snapshot
         fname = f"{url.replace('http://', '').replace('https://', '').replace('/', '_')}.html"
         with open(SNAPSHOT_DIR / fname, "w", encoding="utf-8") as f:
             f.write(response.text)
 
-        # 🧅 Recursive discovery
+        # Match keywords
+        matches = [kw for kw in keywords if re.search(re.escape(kw), text, re.IGNORECASE)]
+
+        # Extract & store .onion links
         found_onions = extract_onions(response.text)
-        for o in found_onions:
-            tag = classify_onion(o)
-            cursor.execute("INSERT OR IGNORE INTO onions (url, source, tag) VALUES (?, ?, ?)", (o, "recursive", tag))
+        for link in found_onions:
+            tag = classify_onion(link)
+            cursor.execute(
+                "INSERT OR IGNORE INTO onions (url, source, tag, depth) VALUES (?, ?, ?, ?)",
+                (link, url, tag, depth + 1)
+            )
+            with SAVE_PATH.open("a", encoding="utf-8") as f:
+                f.write(link + "\n")
+            print(f"[+] Found .onion link: {link} (depth {depth + 1})")
+
+            # Recursive crawl
+            if depth + 1 <= max_depth:
+                crawl_onion(link, depth + 1, max_depth)
 
         conn.commit()
 
         return {
             "url": url,
             "matches": matches,
-            "found_onions": found_onions,
             "snapshot_file": fname
         }
+
     except Exception as e:
-        return {
-            "url": url,
-            "error": str(e)
-        }
+        return {"url": url, "error": str(e)}
 
-
-# Optional: limit concurrency to prevent overload or bans
+# Threaded control
 MAX_THREADS = 10
 onion_queue = Queue()
-
 
 def threaded_worker():
     while not onion_queue.empty():
         onion_url = onion_queue.get()
-        result = crawl_onion(onion_url)
-        if result.get("matches"):
-            print(f"[+] {onion_url} matched: {result['matches']}")
-        elif result.get("error"):
-            print(f"[!] {onion_url} failed: {result['error']}")
+        crawl_onion(onion_url)
         onion_queue.task_done()
-
 
 def threaded_crawl(onion_list):
     for url in onion_list:
@@ -132,9 +127,6 @@ def threaded_crawl(onion_list):
     for t in threads:
         t.join()
 
-
-# Optional: CLI entrypoint for testing
 if __name__ == "__main__":
     test_url = "http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/"
-    result = crawl_onion(test_url)
-    print(json.dumps(result, indent=2))
+    crawl_onion(test_url)

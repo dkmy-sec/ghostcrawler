@@ -77,3 +77,5 @@ This toolkit is for ***educational*** and ***defensive cybersecurity*** purposes
 - [ ] Go Public at some point.  Once totally dialed in. 
 - [ ] Buiding my own Darkweb Aggregator to my own seed_onions.txt list
 - [ ] Add clearnet into the mix.
+- [ ] Adding depth to crawling
+- [ ] Recursive crawling
