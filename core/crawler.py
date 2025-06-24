@@ -128,5 +128,5 @@ def threaded_crawl(onion_list):
         t.join()
 
 if __name__ == "__main__":
-    test_url = "http://haystak5njsmn2hqkewecpaxetahtwhsbsa64jom2k22z5afxhnpxfid.onion/"
+    test_url = "http://vice2rsunli3mauak6wppu4poycjco4aj4h7rcgmf7p6eyiqzywxglid.onion"
     crawl_onion(test_url)

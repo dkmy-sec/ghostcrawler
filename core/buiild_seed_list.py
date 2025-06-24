@@ -5,6 +5,7 @@ from requests_tor import RequestsTor
 import sys
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+from core.crawler import crawl_onion
 from core.identity import rotate_identity
 
 # --- Constants ---
@@ -97,26 +98,19 @@ def classify_onion(url):
     return "unknown"
 
 # --- Crawl Sources ---
-for source_name, url in sources.items():
-    print(f"[+] Crawling {source_name}: {url}")
-    try:
-        if counter > 0 and counter % ROTATE_INTERVAL == 0:
-            rotate_identity(session)
-        counter += 1
-
-        response = session.get(url, headers=HEADERS, timeout=20)
-        onions = extract_onions(response.text)
-
-        for onion_url in onions:
+result = crawl_onion(url, depth=3, max_depth=4)
+try:
+    if result.get("found_onions"):
+        print(f'Crawling {result} onion')
+        for onion_url in result["found_onions"]:
             tag = classify_onion(onion_url)
             cursor.execute("INSERT OR IGNORE INTO onions (url, source, tag) VALUES (?, ?, ?)",
                            (onion_url, source_name, tag))
             with SAVE_PATH.open("a", encoding="utf-8") as f:
                 f.write(onion_url + "\n")
 
-    except Exception as e:
-        print(f"[!] Error crawling {url}: {e}")
-
+except Exception as e:
+    print(f'[!] Error Crawling onion: {e}')
 # --- Wrap-up ---
 conn.commit()
 conn.close()
