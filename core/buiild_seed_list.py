@@ -97,20 +97,25 @@ def classify_onion(url):
         return "leak"
     return "unknown"
 
-# --- Crawl Sources ---
-result = crawl_onion(url, depth=3, max_depth=4)
-try:
-    if result.get("found_onions"):
-        print(f'Crawling {result} onion')
-        for onion_url in result["found_onions"]:
-            tag = classify_onion(onion_url)
-            cursor.execute("INSERT OR IGNORE INTO onions (url, source, tag) VALUES (?, ?, ?)",
-                           (onion_url, source_name, tag))
-            with SAVE_PATH.open("a", encoding="utf-8") as f:
-                f.write(onion_url + "\n")
 
-except Exception as e:
-    print(f'[!] Error Crawling onion: {e}')
+# --- Crawl Sources ---
+total_sources = len(sources)
+completed = 0
+
+for source_name, url in sources.items():
+    print(f"\n[+] Crawling {source_name}: {url}")
+    try:
+        result = crawl_onion(url, depth=2, max_depth=3)  # <-- Recursive dark magic
+        if result.get("error"):
+            print(f"[!] Failed to crawl {url}: {result['error']}")
+        else:
+            print(f"[✓] Crawled {url} successfully. Snapshot: {result.get('snapshot_file')}")
+            completed += 1
+            print(f"[{completed}/{total_sources}] ✅ Done with {source_name}")
+    except Exception as e:
+        print(f"[!] Error crawling {url}: {e}")
+
+
 # --- Wrap-up ---
 conn.commit()
 conn.close()

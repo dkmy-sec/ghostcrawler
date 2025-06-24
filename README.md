@@ -64,6 +64,21 @@ This toolkit is for ***educational*** and ***defensive cybersecurity*** purposes
 
 ---
 
+---
+
+### 🛡️ Reasonable Depth Recommendation
+| Depth | Use Case                                                                                                       |
+| ----- | -------------------------------------------------------------------------------------------------------------- |
+| `0`   | Just the seed link (homepage).                                                                                 |
+| `1`   | Crawl links directly on that page. Good for most basic discovery.                                              |
+| `2`   | Go one link deeper — useful for directory-style sites.                                                         |
+| `3-4` | Deep forums, marketplaces, archives. Beyond this you need guardrails.                                          |
+| `5+`  | Only do this with intelligent pruning, deduping, and domain filtering. Otherwise it’s crawling spaghetti hell. |
+
+
+
+---
+
 ### 👤 Built by Kei Nova
 
 ---
