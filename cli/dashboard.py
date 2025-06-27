@@ -17,6 +17,7 @@ from core.crawler import crawl_onion
 from core.search_engine import build_index, search
 from core.identity import rotate_identity
 from core.utils import DATA_DIR
+from core.safeguard import is_high_risk
 
 
 # Paths
@@ -93,7 +94,7 @@ onion_urls = []
 if DB_PATH.exists():
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT url FROM onions")
+    cursor.execute("SELECT DISTINCT url FROM onions WHERE quarantined = 0")
     onion_urls = [row[0] for row in cursor.fetchall()]
     conn.close()
 
@@ -179,7 +180,11 @@ SNAPSHOT_DIR = DATA_DIR / "snapshots"
 snap_files = sorted(SNAPSHOT_DIR.glob("*.html"))
 
 if snap_files:
-    snap_names = [f.name for f in snap_files]
+    safe_snaps = [
+        f for f in SNAPSHOT_DIR.glob("*.html")
+        if not is_high_risk(f.name, f.read_text(errors="ignore"))
+    ]
+    snap_files = sorted(safe_snaps)
     snap_select = st.selectbox("Select snapshot to view", snap_names)
     if snap_select:
         content = (SNAPSHOT_DIR / snap_select).read_text(encoding="utf-8")

@@ -8,6 +8,7 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.crawler import crawl_onion
 from core.identity import rotate_identity
 
+
 # --- Constants ---
 ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
 HEADERS = {"User-Agent": "GhostcrawlerBot/1.0"}
@@ -105,15 +106,19 @@ completed = 0
 for source_name, url in sources.items():
     print(f"\n[+] Crawling {source_name}: {url}")
     try:
-        result = crawl_onion(url, depth=2, max_depth=3)  # <-- Recursive dark magic
-        if result.get("error"):
+        result = crawl_onion(url, depth=2, max_depth=3)
+
+        if result.get("error") == "quarantined":
+            print(f"[Q] {url} flagged, skipped.")
+        elif result.get("error"):
             print(f"[!] Failed to crawl {url}: {result['error']}")
         else:
             print(f"[✓] Crawled {url} successfully. Snapshot: {result.get('snapshot_file')}")
             completed += 1
             print(f"[{completed}/{total_sources}] ✅ Done with {source_name}")
+
     except Exception as e:
-        print(f"[!] Error crawling {url}: {e}")
+        print(f"[!] Exception crawling {url}: {e}")
 
 
 # --- Wrap-up ---

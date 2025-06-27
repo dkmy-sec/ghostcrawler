@@ -6,7 +6,7 @@ from bs4 import BeautifulSoup
 
 ONION_REGEX = r"http[s]?://[a-zA-Z0-9\-\.]{10,100}\.onion"
 SAVE_PATH = Path("data/seed_onions.txt")
-DB_PATH = Path("data/onion_sources.db")
+DB_PATH = Path("data/onion_sources.db")aa
 
 SAVE_PATH.parent.mkdir(parents=True, exist_ok=True)
 

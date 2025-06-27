@@ -2,6 +2,8 @@ import json, re, sqlite3, threading
 from pathlib import Path
 from queue import Queue
 import sys
+from datetime import datetime, timezone
+
 
 from bs4 import BeautifulSoup
 from requests_tor import RequestsTor
@@ -9,11 +11,13 @@ from requests_tor import RequestsTor
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.identity import rotate_identity
 from core.utils import DATA_DIR
+from core.safeguard import is_high_risk
 
 SAVE_PATH = DATA_DIR / "seed_onions.txt"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
 WATCHLIST_PATH = DATA_DIR / "watchlist.json"
 DB_PATH = DATA_DIR / "onion_sources.db"
+FLAG_LOG = DATA_DIR / "csam_alerts.json"
 
 SNAPSHOT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -64,6 +68,28 @@ def crawl_onion(url, depth=2, max_depth=3):
         print(f"[-] Crawling {url} (depth {depth})")
         headers = {'User-Agent': 'Ghostcrawler/1.0'}
         response = session.get(url, headers=headers, timeout=20)
+
+        def log_quarantine(url):
+            rec = {"url": url, "timestamp": datetime.now(timezone.utc).isoformat()}
+            if FLAG_LOG.exists():
+                data = json.loads(FLAG_LOG.read_text())
+                data.append(rec)
+            else:
+                data = [rec]
+            FLAG_LOG.write_text(json.dumps(data, indent=2))
+
+        # ── risk filter ─────────────────────
+        if is_high_risk(url, response.text):
+            log_quarantine(url)
+            cursor.execute(
+                "INSERT OR IGNORE INTO onions (url, source, tag, depth, quarantined) VALUES (?, ?, ?, ?, 1)",
+                (url, "seed" if depth == 0 else "recursive", "risk", depth)
+            )
+            conn.commit()
+            print(f"[!] Quarantined: {url}")
+            return {"url": url, "error": "quarantined"}
+        # ────────────────────────────────────
+
         soup = BeautifulSoup(response.text, "html.parser")
         text = soup.get_text()
 
@@ -90,6 +116,7 @@ def crawl_onion(url, depth=2, max_depth=3):
             # Recursive crawl
             if depth + 1 <= max_depth:
                 crawl_onion(link, depth + 1, max_depth)
+                print(f"    └── Depth {depth}: {url}")
 
         conn.commit()
 
