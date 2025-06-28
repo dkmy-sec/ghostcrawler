@@ -1,38 +1,47 @@
-from whoosh.index import create_in, open_dir
-from whoosh.fields import Schema, TEXT, ID, DATETIME
-from whoosh.qparser import QueryParser
-from pathlib import Path
+from whoosh import index
+from whoosh.fields import Schema, TEXT, ID
 from bs4 import BeautifulSoup
-from datetime import datetime
+from pathlib import Path
 
+from whoosh.index import open_dir
+from whoosh.qparser import QueryParser
 
-from core.crawler import SNAPSHOT_DIR
-
-# Import Paths
-SNAPSHOT_DIR = Path("data/snapshots")
 INDEX_DIR = Path("data/index")
-
+SNAPSHOT_DIR = Path("data/snapshots")
 
 schema = Schema(
     url=ID(stored=True, unique=True),
-    content=TEXT(stored=True),
-    timestamp=DATETIME(stored=True),
+    content=TEXT(stored=False)
 )
 
 
 def build_index():
-    INDEX_DIR.mkdir(parents=True, exist_ok=True)
-    ix = create_in(INDEX_DIR, schema=schema)
-    writer = ix.writer()
+    # Create or open index safely
+    if not INDEX_DIR.exists():
+        INDEX_DIR.mkdir(parents=True)
+        ix = index.create_in(INDEX_DIR, schema)
+    else:
+        ix = index.open_dir(INDEX_DIR)
 
-    for html_file in SNAPSHOT_DIR.glob("*.html"):
-        with open(html_file, "r", encoding="utf-8") as f:
-            soup = BeautifulSoup(f, "html.parser")
-            text = soup.get_text()
-            url = html_file.stem.replace("_", ".") # Example: onion_site.onion
-            writer.add_document(url=url, content=text)
-            timestamp = datetime.fromtimestamp(html_file.stat().st_mtime).isoformat()
-            writer.commit()
+    # One writer context, one commit
+    with ix.writer(limitmb=256, procs=1, multisegment=True) as writer:
+        for html_file in SNAPSHOT_DIR.glob("*.html"):
+            try:
+                raw = html_file.read_text(encoding="utf-8", errors="ignore")
+                text = BeautifulSoup(raw, "html.parser").get_text(" ", strip=True)
+
+                # update_document overwrites if url already indexed
+                writer.update_document(
+                    url=html_file.name,
+                    content=text
+                )
+                print(f"[+] Indexed {html_file.name}")
+            except Exception as e:
+                # Log but DO NOT close writer; continue loop
+                print(f"[!] Skipped {html_file.name}: {e}")
+
+    # After the with-block, writer is committed & closed automatically
+    print("[✓] Rebuild complete.")
 
 
 def search(query_string):

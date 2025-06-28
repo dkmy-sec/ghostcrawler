@@ -27,6 +27,41 @@ SNAPSHOT_DIR = DATA_DIR / "snapshots"
 ALERTS_PATH = DATA_DIR / "alerts.json"
 WATCHLIST_PATH = DATA_DIR / "watchlist.json"
 
+# --- PDF report generator (keep this near the other imports) ----------
+from fpdf import FPDF
+from datetime import datetime
+PDF_REPORT = DATA_DIR / "reports" / "threat_report.pdf"
+ALERTS_PATH = DATA_DIR / "alerts.json"
+
+def generate_pdf_report():
+    """Compile the latest alerts into a branded PDF."""
+    pdf = FPDF()
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_title("Ghostcrawler Threat Report")
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Ghostcrawler Threat Report", ln=True, align="C")
+    pdf.set_font("Arial", "", 12)
+    pdf.cell(0, 8, f"Generated: {datetime.utcnow().isoformat()} UTC", ln=True)
+
+    if ALERTS_PATH.exists():
+        with open(ALERTS_PATH) as fh:
+            alerts = json.load(fh)
+
+        for alert in alerts:
+            pdf.set_font("Arial", "B", 12)
+            pdf.cell(0, 7, f"• {alert['url']}", ln=True)
+            pdf.set_font("Arial", "", 11)
+            pdf.multi_cell(0, 6, f"  ↳  Matches: {', '.join(alert['matched'])}")
+            pdf.ln(1)
+    else:
+        pdf.ln(5)
+        pdf.cell(0, 8, "No alerts recorded for this crawl.", ln=True)
+
+    PDF_REPORT.parent.mkdir(parents=True, exist_ok=True)
+    pdf.output(PDF_REPORT)
+    print(f"[✓] PDF written to {PDF_REPORT}")
+
 
 # Session state config
 if "rotate_every" not in st.session_state:
@@ -86,7 +121,7 @@ if st.sidebar.button("💾 Save Watchlist"):
 
 if st.sidebar.button("🕷️ Run Mass .onion Scan"):
     with st.spinner("Scanning onion homepages..."):
-        subprocess.run(["python", "core/mass_onion_scanner.py"])
+        subprocess.run(["python", "mass_onion_scanner.py"])
     st.success("Mass scan complete.")
 
 st.sidebar.markdown("## 🎯 Deep Crawl Targets")
@@ -175,22 +210,21 @@ if query:
         else:
             st.warning("No matches found.")
 
+
+# --- Snapshot Viewer ---
 st.subheader("📄 HTML Snapshots")
-SNAPSHOT_DIR = DATA_DIR / "snapshots"
+
 snap_files = sorted(SNAPSHOT_DIR.glob("*.html"))
 
 if snap_files:
-    safe_snaps = [
-        f for f in SNAPSHOT_DIR.glob("*.html")
-        if not is_high_risk(f.name, f.read_text(errors="ignore"))
-    ]
-    snap_files = sorted(safe_snaps)
+    snap_names = [f.name for f in snap_files]
     snap_select = st.selectbox("Select snapshot to view", snap_names)
     if snap_select:
-        content = (SNAPSHOT_DIR / snap_select).read_text(encoding="utf-8")
-        st.components.v1.html(content, height=500, scrolling=True)
+        html = (SNAPSHOT_DIR / snap_select).read_text(encoding="utf-8", errors="ignore")
+        st.components.v1.html(html, height=600, scrolling=True)
 else:
-    st.info("No snapshots found.")
+    st.info("No snapshots found in data/snapshots/ yet — run a crawl first.")
+
 
 
 st.subheader("📄 Latest Threat PDF Report")

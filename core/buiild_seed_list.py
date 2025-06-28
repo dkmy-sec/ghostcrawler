@@ -59,6 +59,8 @@ sources = {
     "tormarks": "http://tormarksq5pj5sbdxilm24xpjupsn6t5ntz2gsiiy4xufukna5eno7id.onion/tormarks-online.html",
     "torjet": "http://torjetp2atnulvrrhbbo6sidoxsvgxf4li5h3n2vu3uudn3tcoxl4ayd.onion/",
     "onionking": "http://onionkimes2trn6zj73lvc2gd2myrphtp42zyctrqw7oyyuc7rbgj2ad.onion/",
+    "Narcoogle": "http://narcooqom5mfevbeb6gck5tg5y2g2f5grywcu7cp4b3bvsmlvph66wqd.onion",
+    "the-onion-bag": "http://on62jjkocppf3alrznspngqt4v7emcyxcxz4r5cq5pwnajyshr2u4uqd.onion",
 
     # Add more as needed
 }
