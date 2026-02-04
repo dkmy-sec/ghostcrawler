@@ -96,6 +96,26 @@ try:
 except Exception as e:
     st.error(f"Failed to load onion source breakdown: {e}")
 
+# Frontier Crawl Sidebar
+st.sidebar.markdown("## 🕸️ Frontier Crawl")
+
+with sqlite3.connect(str(DATA_DIR / "onion_sources.db")) as conn:
+    cur = conn.cursor()
+    stats = {
+        "pending": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='pending'").fetchone()[0],
+        "running": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='running'").fetchone()[0],
+        "done": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='done'").fetchone()[0],
+        "skipped": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='skipped'").fetchone()[0],
+        "quarantined": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='quarantined'").fetchone()[0],
+    }
+
+st.sidebar.write(stats)
+
+if st.sidebar.button(f"🧅 Run Frontier Crawl (pending: {stats['pending']})"):
+    with st.spinner("Crawling frontier queue..."):
+        subprocess.run(["python", "core/frontier_crawl.py"])
+    st.success("Frontier crawl finished.")
+
 # Edit Watchlist Sidebar
 WATCHLIST_PATH = DATA_DIR / "watchlist.json"
 st.sidebar.markdown("## 🧠 Edit Watchlist")
