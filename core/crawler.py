@@ -58,76 +58,49 @@ def classify_onion(url):
     if "leak" in url or "dump" in url: return "leak"
     return "unknown"
 
-def crawl_onion(url, depth=2, max_depth=3):
+def crawl_onion(url, depth=0, max_depth=3):
     global counter
     try:
         if counter > 0 and counter % rotate_interval == 0:
             rotate_identity(session)
         counter += 1
 
-        print(f"[-] Crawling {url} (depth {depth})")
         headers = {'User-Agent': 'Ghostcrawler/1.0'}
-        response = session.get(url, headers=headers, timeout=20)
+        resp = session.get(url, headers=headers, timeout=20)
+        html = resp.text
 
-        def log_quarantine(url):
-            rec = {"url": url, "timestamp": datetime.now(timezone.utc).isoformat()}
-            if FLAG_LOG.exists():
-                data = json.loads(FLAG_LOG.read_text())
-                data.append(rec)
-            else:
-                data = [rec]
-            FLAG_LOG.write_text(json.dumps(data, indent=2))
-
-        # ── risk filter ─────────────────────
-        if is_high_risk(url, response.text):
-            log_quarantine(url)
+        # Quarantine check (don’t store snapshot if risky)
+        if is_high_risk(url, html):
             cursor.execute(
-                "INSERT OR IGNORE INTO onions (url, source, tag, depth, quarantined) VALUES (?, ?, ?, ?, 1)",
-                (url, "seed" if depth == 0 else "recursive", "risk", depth)
+                "UPDATE onions SET quarantined=1, reason=? WHERE url=?",
+                ("high_risk", url)
             )
             conn.commit()
-            print(f"[!] Quarantined: {url}")
-            return {"url": url, "error": "quarantined"}
-        # ────────────────────────────────────
+            return {"url": url, "error": "quarantined", "found_onions": []}
 
-        soup = BeautifulSoup(response.text, "html.parser")
-        text = soup.get_text()
+        soup = BeautifulSoup(html, "html.parser")
+        text = soup.get_text(" ", strip=True)
 
-        # Save snapshot
-        fname = f"{url.replace('http://', '').replace('https://', '').replace('/', '_')}.html"
-        with open(SNAPSHOT_DIR / fname, "w", encoding="utf-8") as f:
-            f.write(response.text)
+        # snapshot (only safe pages)
+        fname = f"{url.replace('http://','').replace('https://','').replace('/','_')}.html"
+        (SNAPSHOT_DIR / fname).write_text(html, encoding="utf-8", errors="ignore")
 
-        # Match keywords
-        matches = [kw for kw in keywords if re.search(re.escape(kw), text, re.IGNORECASE)]
+        found = extract_onions(html)
 
-        # Extract & store .onion links
-        found_onions = extract_onions(response.text)
-        for link in found_onions:
+        # write discoveries to DB (no recursion here, frontier handles it)
+        for link in found:
             tag = classify_onion(link)
             cursor.execute(
-                "INSERT OR IGNORE INTO onions (url, source, tag, depth) VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO onions (url, source, tag, depth, quarantined) VALUES (?, ?, ?, ?, 0)",
                 (link, url, tag, depth + 1)
             )
-            with SAVE_PATH.open("a", encoding="utf-8") as f:
-                f.write(link + "\n")
-            print(f"[+] Found .onion link: {link} (depth {depth + 1})")
-
-            # Recursive crawl
-            if depth + 1 <= max_depth:
-                crawl_onion(link, depth + 1, max_depth)
-                print(f"    └── Depth {depth}: {url}")
 
         conn.commit()
-
-        return {
-            "url": url,
-            "matches": matches,
-            "snapshot_file": fname
-        }
+        return {"url": url, "snapshot_file": fname, "found_onions": found}
 
     except Exception as e:
-        return {"url": url, "error": str(e)}
+        return {"url": url, "error": str(e), "found_onions": []}
+
 
 # Threaded control
 MAX_THREADS = 10
