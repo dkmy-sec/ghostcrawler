@@ -1,296 +1,551 @@
-
 import json
 import sqlite3
 import subprocess
 import threading
-import time
+from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
-from requests_tor import RequestsTor
 
 import sys
-from pathlib import Path
+
 sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 from core.crawler import crawl_onion
 from core.search_engine import build_index, search
-from core.identity import rotate_identity
 from core.utils import DATA_DIR
-from core.safeguard import is_high_risk
 
-
-# Paths
-PDF_REPORT = DATA_DIR / "data/reports/threat_report.pdf"
 DB_PATH = DATA_DIR / "onion_sources.db"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
-ALERTS_PATH = DATA_DIR / "alerts.json"
 WATCHLIST_PATH = DATA_DIR / "watchlist.json"
-
-# --- PDF report generator (keep this near the other imports) ----------
-from fpdf import FPDF
-from datetime import datetime
-PDF_REPORT = DATA_DIR / "reports" / "threat_report.pdf"
 ALERTS_PATH = DATA_DIR / "alerts.json"
+PDF_REPORT = DATA_DIR / "reports" / "threat_report.pdf"
+APP_ROOT = Path(__file__).resolve().parent.parent
+
+
+def run_python(script_path: Path):
+    return subprocess.run([sys.executable, str(script_path)], cwd=APP_ROOT, check=False)
+
+
+def get_connection():
+    return sqlite3.connect(DB_PATH)
+
+
+def table_exists(conn: sqlite3.Connection, table_name: str) -> bool:
+    row = conn.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        (table_name,),
+    ).fetchone()
+    return row is not None
+
+
+def table_columns(conn: sqlite3.Connection, table_name: str) -> set[str]:
+    if not table_exists(conn, table_name):
+        return set()
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return {row[1] for row in rows}
+
+
+def classify_scope(url: str) -> str:
+    return "Dark Web" if ".onion" in (url or "").lower() else "Clear Net"
+
+
+def apply_scope_filter(frame: pd.DataFrame, scope: str, url_column: str = "url") -> pd.DataFrame:
+    if frame.empty or scope == "All Sources" or url_column not in frame.columns:
+        return frame
+    scope_value = "Dark Web" if scope == "Dark Web" else "Clear Net"
+    return frame[frame[url_column].fillna("").map(classify_scope) == scope_value].copy()
+
+
+def load_watchlist():
+    if WATCHLIST_PATH.exists():
+        return json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
+    return {"emails": [], "keywords": [], "domains": []}
+
+
+def save_watchlist(watchlist: dict):
+    WATCHLIST_PATH.write_text(json.dumps(watchlist, indent=2), encoding="utf-8")
+
 
 def generate_pdf_report():
-    """Compile the latest alerts into a branded PDF."""
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_title("Ghostcrawler Threat Report")
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Ghostcrawler Threat Report", ln=True, align="C")
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 8, f"Generated: {datetime.utcnow().isoformat()} UTC", ln=True)
-
-    if ALERTS_PATH.exists():
-        with open(ALERTS_PATH) as fh:
-            alerts = json.load(fh)
-
-        for alert in alerts:
-            pdf.set_font("Arial", "B", 12)
-            pdf.cell(0, 7, f"• {alert['url']}", ln=True)
-            pdf.set_font("Arial", "", 11)
-            pdf.multi_cell(0, 6, f"  ↳  Matches: {', '.join(alert['matched'])}")
-            pdf.ln(1)
-    else:
-        pdf.ln(5)
-        pdf.cell(0, 8, "No alerts recorded for this crawl.", ln=True)
-
-    PDF_REPORT.parent.mkdir(parents=True, exist_ok=True)
-    pdf.output(PDF_REPORT)
-    print(f"[✓] PDF written to {PDF_REPORT}")
-
-
-# Session state config
-if "rotate_every" not in st.session_state:
-    st.session_state.rotate_every = 5
-
-st.set_page_config(layout="wide")
-st.title("👻 Ghostcrawler Darknet Intel Toolkit")
-
-# Sidebar Controls
-st.sidebar.header("🛠️ Controls")
-st.sidebar.slider("Rotate Identity Every N Requests", 1, 20, st.session_state.rotate_every, key="rotate_every")
-
-# Refresh Aggregation Control
-st.markdown("## 🧅 Seed Aggregation Control")
-
-if st.button("⚡ Refresh Aggregated Seeds"):
-    with st.spinner("Running aggregation module..."):
-        subprocess.run(["python", "core/aggregate_feeds.py"])
-    st.success("Seed list and source DB updated!")
-
-# Onion source breakdown stats
-try:
-    conn = sqlite3.connect(str(DB_PATH))
-    df = pd.read_sql_query("SELECT tag, COUNT(*) as count FROM onions GROUP BY tag", conn)
-    conn.close()
-
-    if not df.empty:
-        st.markdown("### 🔍 Onion Source Breakdown")
-        st.dataframe(df, use_container_width=True)
-    else:
-        st.warning("No entries found in onion_sources.db yet.")
-except Exception as e:
-    st.error(f"Failed to load onion source breakdown: {e}")
-
-# Frontier Crawl Sidebar
-st.sidebar.markdown("## 🕸️ Frontier Crawl")
-
-with sqlite3.connect(str(DATA_DIR / "onion_sources.db")) as conn:
-    cur = conn.cursor()
-    stats = {
-        "pending": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='pending'").fetchone()[0],
-        "running": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='running'").fetchone()[0],
-        "done": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='done'").fetchone()[0],
-        "skipped": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='skipped'").fetchone()[0],
-        "quarantined": cur.execute("SELECT COUNT(*) FROM frontier WHERE status='quarantined'").fetchone()[0],
-    }
-
-st.sidebar.write(stats)
-
-if st.sidebar.button(f"🧅 Run Frontier Crawl (pending: {stats['pending']})"):
-    with st.spinner("Crawling frontier queue..."):
-        subprocess.run(["python", "core/frontier_crawl.py"])
-    st.success("Frontier crawl finished.")
-
-# Edit Watchlist Sidebar
-WATCHLIST_PATH = DATA_DIR / "watchlist.json"
-st.sidebar.markdown("## 🧠 Edit Watchlist")
-if WATCHLIST_PATH.exists():
-    with open(WATCHLIST_PATH) as f:
-        watchlist = json.load(f)
-else:
-    watchlist = {"emails": [], "keywords": [], "domains": []}
-
-for category in watchlist:
-    current = watchlist[category]
-    new_list = st.sidebar.text_area(
-        f"{category.capitalize()} (comma-separated)",
-        ", ".join(current),
-        key=category
+    pdf.set_title("Ghostcrawler Exposure Report")
+    pdf.set_font("Arial", "B", 18)
+    pdf.cell(0, 10, "Ghostcrawler Exposure Report", ln=True)
+    pdf.set_font("Arial", "", 11)
+    pdf.multi_cell(
+        0,
+        6,
+        "Threat-hunter dashboard export. Review and retain only data you are authorized to monitor, store, or investigate.",
     )
-    watchlist[category] = [x.strip() for x in new_list.split(",") if x.strip()]
+    pdf.cell(0, 8, f"Generated: {datetime.utcnow().isoformat()} UTC", ln=True)
+    pdf.ln(4)
 
-if st.sidebar.button("💾 Save Watchlist"):
-    with open(WATCHLIST_PATH, "w") as f:
-        json.dump(watchlist, f, indent=2)
-    st.sidebar.success("Watchlist updated.")
-
-if st.sidebar.button("🕷️ Run Mass .onion Scan"):
-    with st.spinner("Scanning onion homepages..."):
-        subprocess.run(["python", "mass_onion_scanner.py"])
-    st.success("Mass scan complete.")
-
-st.sidebar.markdown("## 🎯 Deep Crawl Targets")
-onion_urls = []
-if DB_PATH.exists():
-    conn = sqlite3.connect(DB_PATH)
-    cursor = conn.cursor()
-    cursor.execute("SELECT DISTINCT url FROM onions WHERE quarantined = 0")
-    onion_urls = [row[0] for row in cursor.fetchall()]
-    conn.close()
-
-selected_urls = st.sidebar.multiselect(f"Select .onions to Deep Crawl ({len(onion_urls)} found)", onion_urls)
-
-def run_crawlers(urls):
-    progress = st.progress(0)
-    session = RequestsTor(tor_ports=(9050,), autochange_id=False)
-
-    def crawl_target(url):
-        crawl_onion(url, session, rotate_every=st.session_state.rotate_every)
-
-    threads = []
-    for i, url in enumerate(urls):
-        thread = threading.Thread(target=crawl_target, args=(url,))
-        thread.start()
-        threads.append(thread)
-        time.sleep(0.5)
-
-    for i, t in enumerate(threads):
-        t.join()
-        progress.progress((i + 1) / len(urls))
-
-    st.success("Deep crawl complete.")
-    generate_pdf_report()
-
-if st.sidebar.button("🚀 Deep Crawl Selected"):
-    if selected_urls:
-        run_crawlers(selected_urls)
+    if not DB_PATH.exists():
+        pdf.cell(0, 8, "No telemetry database found.", ln=True)
     else:
-        st.warning("No .onion URLs selected.")
+        try:
+            with get_connection() as conn:
+                if table_exists(conn, "data_leaks"):
+                    findings = pd.read_sql_query(
+                        "SELECT url, leak_type, value FROM data_leaks ORDER BY timestamp DESC LIMIT 50",
+                        conn,
+                    )
+                else:
+                    findings = pd.DataFrame()
 
-st.sidebar.subheader("📦 Index Builder")
-if st.sidebar.button("Build Darknet Index"):
-    with st.spinner("Parsing snapshots and building index..."):
-        build_index()
-        st.sidebar.success("Index built successfully.")
-
-st.subheader("‍🧙 One-Button Mode: Darknet Exposure Scan‍️")
-user_input = st.text_input("Enter your email, domain, or sensitive keyword:")
-
-if st.button("🔍 Search the Darknet"):
-    if not user_input:
-        st.warning("Please enter something to search")
-    else:
-        st.info("💾 Stage 1: Running mass .onion scan...")
-        subprocess.run(["python", "core/mass_onion_scanner.py"])
-        time.sleep(1)
-        st.info("🕷️ Stage 2: Running deep crawler on matched onions...")
-        subprocess.run(["python", "core/crawler.py"])
-        time.sleep(1)
-        st.info("📦 Stage 3: Building index from crawled snapshots...")
-        build_index()
-        st.info("🔍 Stage 4: Searching for exposures...")
-        results = search(user_input)
-        if results:
-            df = pd.DataFrame(results, columns=[".onion URL", "TimeStamp"])
-            st.success(f"💀 {len(results)} potential exposures found.")
-            st.dataframe(df)
-            with st.expander(": Export"):
-                st.download_button("Download as CSV", df.to_csv(index=False), "darknet_results.csv")
-                st.download_button("Download as JSON", df.to_json(orient="records"), "darknet_results.json")
-        else:
-            st.warning("⚠️ No exposures found in the current scan.")
-
-st.subheader("🔎 Darknet Search")
-query = st.text_input("Enter a keyword, email or phrase to search snapshots: ")
-if query:
-    with st.spinner(f"Searching indexed content for: {query}..."):
-        results = search(query)
-        if results:
-            df = pd.DataFrame(results, columns=[".onion URL", "TimeStamp"])
-            st.success(f"Found {len(results)} results.")
-            st.dataframe(df)
-            with st.expander(': Export'):
-                st.download_button("Download as CSV", df.to_csv(index=False), "darknet_results.csv")
-                st.download_button("Download as JSON", df.to_json(orient="records"), "darknet_results.json")
-        else:
-            st.warning("No matches found.")
-
-
-# --- Snapshot Viewer ---
-st.subheader("📄 HTML Snapshots")
-
-snap_files = sorted(SNAPSHOT_DIR.glob("*.html"))
-
-if snap_files:
-    snap_names = [f.name for f in snap_files]
-    snap_select = st.selectbox("Select snapshot to view", snap_names)
-    if snap_select:
-        html = (SNAPSHOT_DIR / snap_select).read_text(encoding="utf-8", errors="ignore")
-        st.components.v1.html(html, height=600, scrolling=True)
-else:
-    st.info("No snapshots found in data/snapshots/ yet — run a crawl first.")
-
-
-
-st.subheader("📄 Latest Threat PDF Report")
-if PDF_REPORT.exists():
-    with open(PDF_REPORT, "rb") as f:
-        st.download_button("Download Threat Report PDF", f, file_name="threat_report.pdf")
-else:
-    st.info("No threat report generated yet.")
-
-def generate_pdf_report():
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", size=12)
-    pdf.set_text_color(255, 0, 255)
-    pdf.set_fill_color(0, 0, 0)
-    pdf.cell(200, 10, "Ghostcrawler Threat Report", ln=True, align="C")
-
-    if ALERTS_PATH.exists():
-        with open(ALERTS_PATH) as f:
-            data = json.load(f)
-        grouped = {}
-        for entry in data:
-            grouped.setdefault(entry['base'], []).extend(entry['matched'])
-        for site, terms in grouped.items():
-            pdf.set_text_color(0, 255, 255)
-            pdf.cell(200, 10, f"Site: {site}", ln=True)
-            pdf.set_text_color(255, 255, 255)
-            pdf.multi_cell(0, 10, f"Matched Terms: {', '.join(set(terms))}")
-    else:
-        pdf.cell(200, 10, "No alerts found.", ln=True)
+            if findings.empty:
+                pdf.cell(0, 8, "No evidence records were available for export.", ln=True)
+            else:
+                for _, row in findings.iterrows():
+                    pdf.set_font("Arial", "B", 11)
+                    pdf.cell(0, 7, f"{row['leak_type']}: {row['value']}", ln=True)
+                    pdf.set_font("Arial", "", 10)
+                    pdf.multi_cell(0, 6, f"Source: {row['url']}")
+                    pdf.ln(1)
+        except Exception as exc:
+            pdf.cell(0, 8, f"Report generation error: {exc}", ln=True)
 
     PDF_REPORT.parent.mkdir(parents=True, exist_ok=True)
     pdf.output(str(PDF_REPORT))
 
-st.subheader("🚨 Threat Alerts")
-if ALERTS_PATH.exists():
-    with open(ALERTS_PATH) as f:
-        alert_data = json.load(f)
-    df = pd.DataFrame(alert_data)
-    if not df.empty:
-        df['timestamp'] = pd.to_datetime(df['timestamp'])
-        st.dataframe(df[['url', 'matched', 'timestamp']].sort_values(by="timestamp", ascending=False))
-        st.download_button("Download as CSV", df.to_csv(index=False), file_name="threat_alerts.csv")
-    else:
-        st.info("No alerts yet. Run a scan.")
-else:
-    st.info("No alerts file found.")
 
-st.markdown("<div class=footer>Made with 💌 and paranoia by Kei Nova ©️ 2025 </div>", unsafe_allow_html=True)
+def load_overview_data():
+    sources = pd.DataFrame(columns=["url", "source", "tag", "last_seen"])
+    findings = pd.DataFrame(columns=["url", "leak_type", "value", "snippet", "timestamp"])
+    frontier = pd.DataFrame(columns=["status", "count"])
+
+    if not DB_PATH.exists():
+        return sources, findings, frontier
+
+    with get_connection() as conn:
+        if table_exists(conn, "onions"):
+            source_columns = table_columns(conn, "onions")
+            select_parts = []
+            for column in ["url", "source", "tag", "last_seen"]:
+                select_parts.append(column if column in source_columns else f"NULL AS {column}")
+            sources = pd.read_sql_query(f"SELECT {', '.join(select_parts)} FROM onions", conn)
+
+        if table_exists(conn, "data_leaks"):
+            leak_columns = table_columns(conn, "data_leaks")
+            select_parts = []
+            for column in ["url", "leak_type", "value", "snippet", "timestamp"]:
+                select_parts.append(column if column in leak_columns else f"NULL AS {column}")
+            findings = pd.read_sql_query(
+                f"SELECT {', '.join(select_parts)} FROM data_leaks ORDER BY timestamp DESC",
+                conn,
+            )
+
+        if table_exists(conn, "frontier"):
+            frontier = pd.read_sql_query(
+                "SELECT status, COUNT(*) AS count FROM frontier GROUP BY status ORDER BY status",
+                conn,
+            )
+
+    return sources, findings, frontier
+
+
+def search_evidence(term: str):
+    records = []
+    if not term or not DB_PATH.exists():
+        return pd.DataFrame(columns=["type", "url", "summary", "timestamp"])
+
+    with get_connection() as conn:
+        if table_exists(conn, "data_leaks"):
+            frame = pd.read_sql_query(
+                """
+                SELECT
+                    leak_type,
+                    url,
+                    value,
+                    snippet,
+                    timestamp
+                FROM data_leaks
+                WHERE value LIKE ? OR snippet LIKE ? OR url LIKE ?
+                ORDER BY timestamp DESC
+                LIMIT 100
+                """,
+                conn,
+                params=(f"%{term}%", f"%{term}%", f"%{term}%"),
+            )
+            if not frame.empty:
+                frame["type"] = frame["leak_type"].fillna("finding")
+                frame["summary"] = frame["value"].fillna("") + " " + frame["snippet"].fillna("")
+                records.append(frame[["type", "url", "summary", "timestamp"]])
+
+    return pd.concat(records, ignore_index=True) if records else pd.DataFrame(columns=["type", "url", "summary", "timestamp"])
+
+
+def run_selected_crawls(urls: list[str], max_depth: int):
+    progress = st.progress(0.0)
+    results = []
+
+    def worker(target_url: str):
+        results.append(crawl_onion(target_url, depth=0, max_depth=max_depth))
+
+    threads = []
+    for index, url in enumerate(urls, start=1):
+        thread = threading.Thread(target=worker, args=(url,))
+        thread.start()
+        threads.append(thread)
+        progress.progress(index / len(urls))
+
+    for thread in threads:
+        thread.join()
+
+    generate_pdf_report()
+    return results
+
+
+st.set_page_config(
+    page_title="Ghostcrawler Threat Intel Console",
+    page_icon="GC",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+st.markdown(
+    """
+    <style>
+    :root {
+        --bg: #08111c;
+        --panel: #0f1b2b;
+        --panel-alt: #132338;
+        --ink: #e6edf6;
+        --muted: #8fa6bf;
+        --accent: #54d2a0;
+        --accent-2: #7ec8ff;
+        --danger: #ff7b72;
+        --border: rgba(126, 200, 255, 0.18);
+    }
+    .stApp {
+        background:
+            radial-gradient(circle at top right, rgba(84, 210, 160, 0.12), transparent 28%),
+            radial-gradient(circle at top left, rgba(126, 200, 255, 0.10), transparent 30%),
+            linear-gradient(180deg, #07101a 0%, #0a1521 100%);
+        color: var(--ink);
+    }
+    .block-container {
+        padding-top: 2rem;
+        padding-bottom: 2rem;
+    }
+    [data-testid="stSidebar"] {
+        background: linear-gradient(180deg, #09111b 0%, #0d1622 100%);
+        border-right: 1px solid var(--border);
+    }
+    .hero {
+        border: 1px solid var(--border);
+        background: linear-gradient(135deg, rgba(15, 27, 43, 0.95), rgba(8, 17, 28, 0.92));
+        padding: 1.4rem 1.6rem;
+        border-radius: 18px;
+        margin-bottom: 1.1rem;
+        box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+    }
+    .hero h1 {
+        margin: 0;
+        font-size: 2.1rem;
+        letter-spacing: 0.02em;
+    }
+    .hero p {
+        color: var(--muted);
+        margin: 0.5rem 0 0 0;
+    }
+    .metric-card {
+        background: linear-gradient(180deg, rgba(15, 27, 43, 0.95), rgba(19, 35, 56, 0.92));
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 1rem 1.1rem;
+        min-height: 118px;
+    }
+    .metric-label {
+        color: var(--muted);
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+    }
+    .metric-value {
+        font-size: 2rem;
+        margin-top: 0.35rem;
+        color: var(--ink);
+        font-weight: 700;
+    }
+    .metric-foot {
+        color: var(--accent-2);
+        margin-top: 0.4rem;
+        font-size: 0.9rem;
+    }
+    .panel-note {
+        border-left: 4px solid var(--accent);
+        background: rgba(84, 210, 160, 0.08);
+        padding: 0.8rem 1rem;
+        border-radius: 10px;
+        color: var(--ink);
+        margin-bottom: 1rem;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+if "crawl_depth" not in st.session_state:
+    st.session_state.crawl_depth = 2
+
+sources_df, findings_df, frontier_df = load_overview_data()
+
+st.sidebar.markdown("## Collection Scope")
+scope = st.sidebar.radio("View", ["Dark Web", "Clear Net", "All Sources"], index=0)
+st.sidebar.caption("The scope toggle changes views and search slices. Only monitor sources you are authorized to collect and retain.")
+
+st.sidebar.markdown("## Watchlist")
+watchlist = load_watchlist()
+for category in ["emails", "keywords", "domains"]:
+    existing = ", ".join(watchlist.get(category, []))
+    updated = st.sidebar.text_area(category.capitalize(), existing, key=f"watchlist_{category}")
+    watchlist[category] = [item.strip() for item in updated.split(",") if item.strip()]
+
+if st.sidebar.button("Save Watchlist", use_container_width=True):
+    save_watchlist(watchlist)
+    st.sidebar.success("Watchlist updated.")
+
+st.sidebar.markdown("## Operations")
+if st.sidebar.button("Refresh Known Sources", use_container_width=True):
+    with st.spinner("Refreshing aggregated source list..."):
+        run_python(APP_ROOT / "core" / "aggregate_feeds.py")
+    st.sidebar.success("Source refresh finished.")
+
+if st.sidebar.button("Run Frontier Crawl", use_container_width=True):
+    with st.spinner("Processing queued targets..."):
+        run_python(APP_ROOT / "core" / "frontier_crawl.py")
+    st.sidebar.success("Frontier crawl finished.")
+
+if st.sidebar.button("Run Homepage Scan", use_container_width=True):
+    with st.spinner("Scanning known homepages..."):
+        run_python(APP_ROOT / "mass_onion_scanner.py")
+    st.sidebar.success("Homepage scan finished.")
+
+if st.sidebar.button("Build Search Index", use_container_width=True):
+    with st.spinner("Indexing snapshots for analyst search..."):
+        build_index()
+    st.sidebar.success("Search index rebuilt.")
+
+if st.sidebar.button("Generate PDF Report", use_container_width=True):
+    generate_pdf_report()
+    st.sidebar.success("Report generated.")
+
+scoped_sources = apply_scope_filter(sources_df, scope)
+scoped_findings = apply_scope_filter(findings_df, scope)
+
+latest_seen = "No data"
+if not scoped_sources.empty and "last_seen" in scoped_sources.columns:
+    valid_seen = pd.to_datetime(scoped_sources["last_seen"], errors="coerce").dropna()
+    if not valid_seen.empty:
+        latest_seen = valid_seen.max().strftime("%Y-%m-%d %H:%M UTC")
+
+snapshot_count = len(list(SNAPSHOT_DIR.glob("*.html")))
+source_count = len(scoped_sources.index)
+finding_count = len(scoped_findings.index)
+high_signal_types = scoped_findings["leak_type"].nunique() if "leak_type" in scoped_findings.columns and not scoped_findings.empty else 0
+
+st.markdown(
+    f"""
+    <div class="hero">
+        <h1>Ghostcrawler Threat Intel Console</h1>
+        <p>Threat-hunter and OSINT-inspired workspace for triaging indexed evidence, reviewing crawl coverage, and pivoting between dark-web and clear-net monitoring views.</p>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+metric_cols = st.columns(4)
+metrics = [
+    ("Sources in Scope", source_count, scope),
+    ("Snapshots Indexed", snapshot_count, "Local evidence cache"),
+    ("Evidence Records", finding_count, "Exposure artifacts"),
+    ("Signal Categories", high_signal_types, latest_seen),
+]
+for column, (label, value, foot) in zip(metric_cols, metrics):
+    column.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+            <div class="metric-foot">{foot}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+overview_tab, search_tab, evidence_tab, ops_tab = st.tabs(
+    ["Overview", "Search", "Evidence", "Collection Ops"]
+)
+
+with overview_tab:
+    st.markdown(
+        """
+        <div class="panel-note">
+            Keep this workspace focused on authorized intelligence collection, breach-notification support, and defensive analysis. The dashboard surfaces what is already present in your local dataset rather than encouraging indiscriminate dump harvesting.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    left, right = st.columns((1.15, 0.85))
+
+    with left:
+        st.subheader("Source Coverage")
+        if scoped_sources.empty:
+            st.info("No sources are available in the current scope yet.")
+        else:
+            scoped_sources = scoped_sources.copy()
+            scoped_sources["scope"] = scoped_sources["url"].fillna("").map(classify_scope)
+
+            tag_counts = (
+                scoped_sources["tag"].fillna("unknown").value_counts().rename_axis("tag").reset_index(name="count")
+            )
+            st.dataframe(tag_counts, use_container_width=True, hide_index=True)
+
+            source_preview = scoped_sources[["url", "source", "tag", "last_seen"]].copy()
+            st.dataframe(source_preview.sort_values(by="last_seen", ascending=False), use_container_width=True, hide_index=True)
+
+    with right:
+        st.subheader("Frontier Queue")
+        if frontier_df.empty:
+            st.info("Frontier queue table is not available yet.")
+        else:
+            st.dataframe(frontier_df, use_container_width=True, hide_index=True)
+
+        st.subheader("Recent Snapshots")
+        snapshot_files = sorted(SNAPSHOT_DIR.glob("*.html"), key=lambda path: path.stat().st_mtime, reverse=True)[:12]
+        if not snapshot_files:
+            st.info("No snapshots found yet.")
+        else:
+            snapshot_table = pd.DataFrame(
+                [
+                    {
+                        "snapshot": item.name,
+                        "scope": classify_scope(item.name),
+                        "updated": datetime.utcfromtimestamp(item.stat().st_mtime).strftime("%Y-%m-%d %H:%M UTC"),
+                    }
+                    for item in snapshot_files
+                ]
+            )
+            st.dataframe(snapshot_table, use_container_width=True, hide_index=True)
+
+with search_tab:
+    st.subheader("Analyst Search")
+    st.caption("Searches your local Whoosh index and evidence records. This is useful for monitoring indicators, domains, aliases, or organization names already present in your collected dataset.")
+    query = st.text_input("Indicator or keyword", placeholder="email, domain, alias, org, hash fragment", key="search_query")
+
+    if query:
+        index_results = pd.DataFrame(search(query))
+        evidence_results = search_evidence(query)
+
+        if not index_results.empty:
+            index_results = apply_scope_filter(index_results, scope)
+            if not index_results.empty:
+                index_results["indexed_at"] = pd.to_datetime(index_results["indexed_at"], errors="coerce")
+                st.markdown("#### Snapshot Matches")
+                st.dataframe(index_results, use_container_width=True, hide_index=True)
+
+        if not evidence_results.empty:
+            evidence_results = apply_scope_filter(evidence_results, scope)
+            if not evidence_results.empty:
+                st.markdown("#### Evidence Matches")
+                st.dataframe(evidence_results, use_container_width=True, hide_index=True)
+
+        if index_results.empty and evidence_results.empty:
+            st.warning("No local matches were found in the current scope.")
+
+with evidence_tab:
+    st.subheader("Exposure Artifacts")
+    st.caption("Review records extracted from previously crawled pages. Treat all data here as sensitive and handle it under your legal and operational controls.")
+
+    if scoped_findings.empty:
+        st.info("No evidence records are available yet.")
+    else:
+        finding_types = ["All types"] + sorted(scoped_findings["leak_type"].dropna().unique().tolist())
+        selected_type = st.selectbox("Filter by type", finding_types)
+
+        filtered_findings = scoped_findings.copy()
+        if selected_type != "All types":
+            filtered_findings = filtered_findings[filtered_findings["leak_type"] == selected_type]
+
+        st.dataframe(filtered_findings, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download evidence CSV",
+            filtered_findings.to_csv(index=False),
+            file_name="ghostcrawler_evidence.csv",
+            use_container_width=True,
+        )
+
+        evidence_summary = (
+            filtered_findings["leak_type"]
+            .fillna("unknown")
+            .value_counts()
+            .rename_axis("type")
+            .reset_index(name="count")
+        )
+        st.markdown("#### Evidence Type Summary")
+        st.dataframe(evidence_summary, use_container_width=True, hide_index=True)
+
+    st.subheader("Threat Alerts")
+    if ALERTS_PATH.exists():
+        alerts_df = pd.DataFrame(json.loads(ALERTS_PATH.read_text(encoding="utf-8")))
+        alerts_df = apply_scope_filter(alerts_df, scope)
+        if alerts_df.empty:
+            st.info("No alerts were found in the current scope.")
+        else:
+            st.dataframe(alerts_df, use_container_width=True, hide_index=True)
+    else:
+        st.info("No alert feed has been generated yet.")
+
+    st.subheader("Latest PDF Report")
+    if PDF_REPORT.exists():
+        st.download_button(
+            "Download PDF report",
+            PDF_REPORT.read_bytes(),
+            file_name="ghostcrawler_threat_report.pdf",
+            use_container_width=True,
+        )
+    else:
+        st.info("Generate a report from the sidebar when you are ready.")
+
+with ops_tab:
+    st.subheader("Targeted Collection")
+    st.caption("Use analyst-led collection to deepen coverage for sources you explicitly select. This keeps the workflow closer to a threat-hunting queue instead of uncontrolled crawling.")
+
+    st.session_state.crawl_depth = st.slider("Max depth", min_value=1, max_value=5, value=st.session_state.crawl_depth)
+
+    candidate_sources = scoped_sources.copy()
+    if not candidate_sources.empty:
+        available_urls = candidate_sources["url"].dropna().unique().tolist()
+    else:
+        available_urls = []
+
+    selected_urls = st.multiselect(
+        f"Select targets ({len(available_urls)} available in scope)",
+        options=available_urls,
+    )
+
+    if st.button("Run Targeted Crawl", use_container_width=True):
+        if not selected_urls:
+            st.warning("Select at least one target to crawl.")
+        else:
+            with st.spinner("Running targeted crawl..."):
+                results = run_selected_crawls(selected_urls, st.session_state.crawl_depth)
+            st.success(f"Completed {len(results)} crawl job(s).")
+            st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+
+    st.subheader("Snapshot Viewer")
+    snapshot_files = sorted(SNAPSHOT_DIR.glob("*.html"))
+    if not snapshot_files:
+        st.info("No snapshots are available yet.")
+    else:
+        selected_snapshot = st.selectbox("Open snapshot", [path.name for path in snapshot_files])
+        snapshot_path = SNAPSHOT_DIR / selected_snapshot
+        html = snapshot_path.read_text(encoding="utf-8", errors="ignore")
+        st.components.v1.html(html, height=640, scrolling=True)

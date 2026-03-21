@@ -1,21 +1,18 @@
-# 👻 ghostcrawler — Cyberpunk Dark Web Threat Intel Toolkit
+# ghostcrawler - Threat Intel and Exposure Monitoring Console
 
-> “The net remembers. Let’s find out what it remembers about you."
-
-**ghostcrawler** is a modular, hacker-themed dark web crawler and leak detection engine. Built for cybersecurity analysts, threat hunters, and netrunners who want visibility into the hidden grid.
+**ghostcrawler** is a modular threat-intelligence workspace for cybersecurity analysts, threat hunters, and OSINT teams. It combines source tracking, local snapshot indexing, evidence review, and dashboard-driven triage for authorized monitoring workflows.
 
 ---
 
-### 🔥 Features
+### Features
 
-- 🧠 AI keyword fuzzing for emails, SSNs, credit cards, companies
-- 🌐 Crawls darknet via Tor
-- 🔄 Auto-rotates Tor identities
-- 🕵️ Alerts you to leaks via CLI or dashboard
-- 🔍 Full-text search on indexed `.onion` sites
-- 📊 Streamlit frontend for threat visibility
-- 🧙‍♂️ Aggregated super list of onion sites `seed_onions.txt`
-- 
+- Watchlist support for emails, keywords, and domains
+- Dark-web source collection via Tor-based workflows already present in the repo
+- Local full-text search across indexed HTML snapshots
+- Exposure evidence review from the local `data_leaks` table
+- Streamlit dashboard with a professional threat-hunter layout
+- Source scope toggle for `Dark Web`, `Clear Net`, or `All Sources`
+- PDF export for analyst reporting
 ---
 
 ### 🧪 Install
@@ -43,6 +40,14 @@ python cli/run_scan.py
 streamlit run cli/dashboard.py
 ```
 
+The dashboard now includes:
+
+- Overview metrics for sources, snapshots, findings, and queue health
+- Analyst search across local index and evidence records
+- Evidence review with export controls
+- Targeted collection controls instead of a single noisy one-shot workflow
+- A clear-net toggle for source filtering and future expansion
+
 ---
 ### 📂 Watchlist Format
 
@@ -58,8 +63,8 @@ supports: comma seperated emails, keywords, and dowmains
 
 ---
 
-### 🛡️ Legal & Ethical
-This toolkit is for ***educational*** and ***defensive cybersecurity*** purposes only. Do not use it to access illegal content.
+### Legal and Ethical Use
+This toolkit is for defensive security, authorized intelligence collection, and exposure monitoring only. Do not use it to access illegal content, retain data you are not authorized to store, or perform unauthorized collection against third-party systems.
 
 
 ---
@@ -91,6 +96,6 @@ This toolkit is for ***educational*** and ***defensive cybersecurity*** purposes
 - [ x ] Mass `.onion` scanning engine
 - [ ] Go Public at some point.  Once totally dialed in. 
 - [ ] Buiding my own Darkweb Aggregator to my own seed_onions.txt list
-- [ ] Add clearnet into the mix.
+- [x] Add clearnet into the dashboard scope model.
 - [ ] Adding depth to crawling
 - [ ] Recursive crawling

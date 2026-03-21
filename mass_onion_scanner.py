@@ -1,8 +1,10 @@
+import sys
 from requests_tor import RequestsTor
+from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 from core.identity import rotate_identity
 from bs4 import BeautifulSoup
-from pathlib import Path
+
 import sqlite3
 import json
 import re

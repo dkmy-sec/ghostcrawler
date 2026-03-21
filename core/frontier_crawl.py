@@ -1,4 +1,9 @@
 # core/frontier_crawl.py
+import sys
+from pathlib import Path
+# This line tells Python to look in the parent folder for the 'core' module
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
 import sqlite3, time
 from datetime import datetime, timezone
 from urllib.parse import urlparse
@@ -10,7 +15,7 @@ from core.safeguard import is_high_risk
 DB = DATA_DIR / "onion_sources.db"
 
 # Controls
-MAX_DEPTH = 3
+MAX_DEPTH = 5
 MAX_TOTAL_PAGES = 5000          # total pages fetched per run
 MAX_NEW_ENQUEUE = 20000         # safety cap so frontier doesn't explode in one run
 MAX_TRIES = 2                   # retry failures a couple times
