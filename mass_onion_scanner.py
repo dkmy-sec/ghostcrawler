@@ -12,13 +12,8 @@ import time
 
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 DB_PATH = Path("data/onion_links.db")
-WATCHLIST_PATH = Path("data/watchlist.json")
 SEED_PATH = Path("data/seed_onions.txt")
 
-# Load keyword watchlist
-with open(WATCHLIST_PATH) as f:
-    watchlist = json.load(f)
-    keywords = [item for sublist in watchlist.values() for item in sublist]
 
 # Setup database
 conn = sqlite3.connect(DB_PATH)

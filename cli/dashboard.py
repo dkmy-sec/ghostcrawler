@@ -4,7 +4,9 @@ import subprocess
 import threading
 from datetime import datetime
 from pathlib import Path
-
+import scrapy
+import requests
+from requests_tor import RequestsTor
 import pandas as pd
 import streamlit as st
 from fpdf import FPDF
@@ -19,14 +21,76 @@ from core.utils import DATA_DIR
 
 DB_PATH = DATA_DIR / "onion_sources.db"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
-WATCHLIST_PATH = DATA_DIR / "watchlist.json"
 ALERTS_PATH = DATA_DIR / "alerts.json"
 PDF_REPORT = DATA_DIR / "reports" / "threat_report.pdf"
 APP_ROOT = Path(__file__).resolve().parent.parent
 
+# --- TOR SESSION SETUP ---
+# Initialize Tor once at the start
+
+def get_tor_session():
+    return RequestsTor(tor_ports=(9050,), autochange_id=False)
+
+session_tor = get_tor_session()
+
+
+def get_clear_session():
+    return requests.Session()
+
+session_web = get_clear_session()
 
 def run_python(script_path: Path):
     return subprocess.run([sys.executable, str(script_path)], cwd=APP_ROOT, check=False)
+
+
+def process_url(url, session):
+    """Processes a single URL and saves harvested data to the DB."""
+    try:
+        print(f"Processing: {url}")
+        response = session.get(url, timeout=15)
+        html = response.text
+        soup = BeautifulSoup(html, "html.parser")
+        text = soup.get_text(" ", strip=True)
+
+        # --- HARVESTING LOGIC ---
+        conn = sqlite3.connect(DB_PATH)
+
+        # Regex Patterns
+        EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+        API_KEY_REGEX = r'(?i)(api[_-]?key|apikey|secret|token)[\s:]*["\']?([A-Za-z0-9\-._~+/]+=*)["\']?'
+        HASH_REGEX = r'(?:[a-f0-9]{32}|[a-f0-9]{40}|[a-f0-9]{64})'
+
+        results = []
+
+        # Extract Emails
+        for email in re.findall(EMAIL_REGEX, text):
+            results.append(('email', email, text[text.find(email):text.find(email) + 50]))
+
+        # Extract API Keys
+        for match in re.finditer(API_KEY_REGEX, text):
+            key = match.group(2)
+            results.append(('api_key', key, match.group(0)))
+
+        # Extract Hashes
+        for hash_val in re.findall(HASH_REGEX, text):
+            results.append(('hash', hash_val, text[text.find(hash_val):text.find(hash_val) + 20]))
+
+        # Save to DB
+        for leak_type, value, snippet in results:
+            conn.execute("""
+                         INSERT INTO data_leaks (url, leak_type, value, snippet)
+                         VALUES (?, ?, ?, ?)
+                         """, (url, leak_type, value, snippet))
+
+        conn.commit()
+        conn.close()
+        # --- END HARVESTING ---
+
+        return {"status": "success", "url": url}
+
+    except Exception as e:
+        print(f"Error processing {url}: {e}")
+        return {"status": "error", "url": url, "error": str(e)}
 
 
 def get_connection():
@@ -57,16 +121,6 @@ def apply_scope_filter(frame: pd.DataFrame, scope: str, url_column: str = "url")
         return frame
     scope_value = "Dark Web" if scope == "Dark Web" else "Clear Net"
     return frame[frame[url_column].fillna("").map(classify_scope) == scope_value].copy()
-
-
-def load_watchlist():
-    if WATCHLIST_PATH.exists():
-        return json.loads(WATCHLIST_PATH.read_text(encoding="utf-8"))
-    return {"emails": [], "keywords": [], "domains": []}
-
-
-def save_watchlist(watchlist: dict):
-    WATCHLIST_PATH.write_text(json.dumps(watchlist, indent=2), encoding="utf-8")
 
 
 def generate_pdf_report():
@@ -300,41 +354,49 @@ st.sidebar.markdown("## Collection Scope")
 scope = st.sidebar.radio("View", ["Dark Web", "Clear Net", "All Sources"], index=0)
 st.sidebar.caption("The scope toggle changes views and search slices. Only monitor sources you are authorized to collect and retain.")
 
-st.sidebar.markdown("## Watchlist")
-watchlist = load_watchlist()
-for category in ["emails", "keywords", "domains"]:
-    existing = ", ".join(watchlist.get(category, []))
-    updated = st.sidebar.text_area(category.capitalize(), existing, key=f"watchlist_{category}")
-    watchlist[category] = [item.strip() for item in updated.split(",") if item.strip()]
-
-if st.sidebar.button("Save Watchlist", use_container_width=True):
-    save_watchlist(watchlist)
-    st.sidebar.success("Watchlist updated.")
 
 st.sidebar.markdown("## Operations")
-if st.sidebar.button("Refresh Known Sources", use_container_width=True):
+if st.sidebar.button("Refresh Known Sources", width='stretch'):
     with st.spinner("Refreshing aggregated source list..."):
         run_python(APP_ROOT / "core" / "aggregate_feeds.py")
     st.sidebar.success("Source refresh finished.")
-
-if st.sidebar.button("Run Frontier Crawl", use_container_width=True):
+if st.sidebar.button("Run Targeted Crawl", width='stretch'):
+    with st.spinner("Processing queued targets..."):
+        run_python(APP_ROOT / "core" / "crawler.py")
+    st.sidebar.success("Target crawl finished.")
+if st.sidebar.button("Run Frontier Crawl", width='stretch'):
     with st.spinner("Processing queued targets..."):
         run_python(APP_ROOT / "core" / "frontier_crawl.py")
     st.sidebar.success("Frontier crawl finished.")
 
-if st.sidebar.button("Run Homepage Scan", use_container_width=True):
+if st.sidebar.button("Run Homepage Scan", width='stretch'):
     with st.spinner("Scanning known homepages..."):
         run_python(APP_ROOT / "mass_onion_scanner.py")
     st.sidebar.success("Homepage scan finished.")
 
-if st.sidebar.button("Build Search Index", use_container_width=True):
+if st.sidebar.button("Build Search Index", width='stretch'):
     with st.spinner("Indexing snapshots for analyst search..."):
         build_index()
     st.sidebar.success("Search index rebuilt.")
 
-if st.sidebar.button("Generate PDF Report", use_container_width=True):
+if st.sidebar.button("Generate PDF Report", width='stretch'):
     generate_pdf_report()
     st.sidebar.success("Report generated.")
+st.sidebar.markdown("## Manual Harvest")
+SEED_URL = st.sidebar.text_input("Enter Seed URL", value="http://vfnmxpa6fo4jdpyq3yneqhglluweax2uclvxkytfpmpkp5rsl75ir5qd.onion")
+
+if st.sidebar.button("Start Harvesting"):
+    if ".onion" in SEED_URL:
+        # Use Tor Session
+        with st.spinner(f"Crawling Darkweb site {SEED_URL} with Tor..."):
+            process_url(SEED_URL, session_tor)
+        st.sidebar.success("Darkweb Harvesting Complete!")
+    else:
+        # Use Standard Session
+        with st.spinner(f"Crawling Clearweb site {SEED_URL}..."):
+            process_url(SEED_URL, session_web)
+        st.success("Clearweb Harvesting Complete!")
+
 
 scoped_sources = apply_scope_filter(sources_df, scope)
 scoped_findings = apply_scope_filter(findings_df, scope)
@@ -531,7 +593,7 @@ with ops_tab:
         options=available_urls,
     )
 
-    if st.button("Run Targeted Crawl", use_container_width=True):
+    if st.button("Run Targeted Crawl", width='stretch'):
         if not selected_urls:
             st.warning("Select at least one target to crawl.")
         else:
