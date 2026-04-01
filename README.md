@@ -1,17 +1,20 @@
 # ghostcrawler - Threat Intel and Exposure Monitoring Console
 
-**ghostcrawler** is a modular threat-intelligence workspace for cybersecurity analysts, threat hunters, and OSINT teams. It combines source tracking, local snapshot indexing, evidence review, and dashboard-driven triage for authorized monitoring workflows.
+**ghostcrawler** is a modular threat-intelligence workspace for cybersecurity analysts, threat hunters, and OSINT teams. It combines source tracking, local snapshot indexing, zero-day signal triage, evidence review, and dashboard-driven workflows for authorized monitoring.
 
 ---
 
 ### Features
 
 - Watchlist support for emails, keywords, and domains
+- Network-aware source catalog for Tor, I2P, Freenet, Gnunet, Riffle, and adjacent darknet connectors
+- Zero-day signal queue for exploit chatter, active-exploitation language, and critical-CVE mentions found in collected content
 - Dark-web source collection via Tor-based workflows already present in the repo
 - Local full-text search across indexed HTML snapshots
 - Exposure evidence review from the local `data_leaks` table
 - Streamlit dashboard with a professional threat-hunter layout
 - Source scope toggle for `Dark Web`, `Clear Net`, or `All Sources`
+- Coverage views that separate fetch-ready networks from catalog-only networks
 - PDF export for analyst reporting
 ---
 
@@ -45,8 +48,10 @@ The dashboard now includes:
 - Overview metrics for sources, snapshots, findings, and queue health
 - Analyst search across local index and evidence records
 - Evidence review with export controls
+- A day-zero intelligence panel for urgent exploit telemetry
 - Targeted collection controls instead of a single noisy one-shot workflow
 - A clear-net toggle for source filtering and future expansion
+- Multi-network source coverage for darknet ecosystems beyond Tor
 
 ---
 ### 📂 Watchlist Format
@@ -65,6 +70,8 @@ supports: comma seperated emails, keywords, and dowmains
 
 ### Legal and Ethical Use
 This toolkit is for defensive security, authorized intelligence collection, and exposure monitoring only. Do not use it to access illegal content, retain data you are not authorized to store, or perform unauthorized collection against third-party systems.
+
+The multi-darknet catalog is intentionally connector-aware: Tor and clear-net HTTP collection work today, while Freenet, Gnunet, Riffle, ZeroNet, Lokinet, and similar ecosystems are tracked in the schema and dashboard so dedicated transport adapters can be added without rewriting the app.
 
 
 ---

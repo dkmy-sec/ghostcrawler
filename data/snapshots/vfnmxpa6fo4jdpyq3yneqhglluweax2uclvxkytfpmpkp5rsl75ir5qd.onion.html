@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en-US" dir="ltr">
+
+<head>
+  <title>Welcome | The Washington Post | SecureDrop</title>
+
+  <link rel="stylesheet" href="/static/css/source.css">
+  <link rel="icon" type="image/png" href="/static/i/favicon.png">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+
+  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
+  <script src="/static/js/source.js"></script>
+</head>
+
+<body id="source-index">
+  <div id="browser-security-level" class="warning" role="alert">
+    <p>Your Tor Browser's <a id="disable-js" href=""><b>Security Level</b></a> is too low. Use the <img src="/static/i/font-awesome/white/guard.svg" alt="&quot;Security Level&quot;"> button in your browser’s toolbar to change it.</p>
+  </div>
+  <dialog open id="security-level-info" aria-labelledby="security-level-heading"
+    aria-describedby="security-level-instructions">
+    <h2 id="security-level-heading" hidden>How to change your security level</h2>
+    <ol id="security-level-instructions">
+      <li>
+        Click the <img src="/static/i/font-awesome/black/guard.svg" alt="&quot;Security Level&quot; button"> in the toolbar above
+      </li>
+      <li>Click <b>Settings</b> to open Security Level preferences</li>
+      <li>Click <b>Change…</b> and select <b>Safest</b></li>
+      <li>Click <b>Save and restart.</b></li>
+    </ol>
+    <p>
+    Tor Browser will restart, with its security level set to <b>Safest</b>. After the restart, come back to this site.
+    </p>
+  </dialog>
+  <div id="browser-tb" class="warning" role="alert">
+    <p><strong>It is recommended to use Tor Browser to access SecureDrop:</strong> <a class="recommend-tor" href="/use-tor">Learn how to install it</a>, or ignore this warning to continue.
+    <span id="browser-tb-close" aria-label="Close">×</span></p>
+  </div>
+  <div id="browser-android" class="warning" role="alert">
+    <p><strong>It is recommended you use the desktop version of Tor Browser to access SecureDrop, as Tor Browser for Android does not provide the same level of security and anonymity as the desktop version.</strong> <a class="recommend-tor" aria-label="Learn how to install Tor Browser" href="/use-tor" >Learn how to install it</a>, or ignore this warning to continue.
+    <span id="browser-android-close" aria-label="Close">×</span></p>
+  </div>
+
+  <div class="content">
+    <header>
+      <h1><img src="/static/i/custom_logo.png" alt="The Washington Post logo"></h1>
+    </header>
+
+    <main>
+      <section id="first-submission" aria-labelledby="first-submission-heading">
+        <h2 id="first-submission-heading">First submission</h2>
+        <p>First time submitting to our SecureDrop? Start here.</p>
+        <form id="started-form" method="post" action="/generate" autocomplete="off">
+          <input name="csrf_token" type="hidden" value="IjJmODEzOGYxMTIwNGU1YTk5NzA1NmI1OGNmNmIzOGVhOWVlZGIwZjQi.acBKmw.BYyz-JulNIpLzQnzCd-j4QALeaI">
+          <input name="tor2web_check" type="hidden" value='href="fake.onion"'>
+          <button type="submit" aria-label="Get Started With Your First Submission">
+            GET STARTED
+          </button>
+        </form>
+      </section>
+
+      <section id="return-visit" aria-labelledby="return-visit-heading">
+          <h2 id="return-visit-heading">Return visit</h2>
+          <p>Already have a codename? Check for replies or submit something new.</p>
+          <a href="/login" class="btn secondary"
+            aria-label="Log In Using Your Codename">
+            LOG IN
+          </a>
+      </section>
+    </main>
+  </div>
+<footer>
+  <p id="footer-powered-by">
+    Powered by <b>SecureDrop 2.14.0</b>.
+  </p>
+  <p id="footer-advisory">
+    Please note: Sharing sensitive information may put you at risk, even when using Tor and SecureDrop.
+  </p>
+  <p id="footer-fpf">
+    SecureDrop is a project of Freedom of the Press Foundation.
+  </p>
+</footer>
+
+</body>
+
+</html>

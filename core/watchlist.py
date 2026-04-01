@@ -1,16 +1,26 @@
-import json
+from __future__ import annotations
 
 
-def load_watchlist(path="data/watchlist.json"):
-    with open(path) as f:
-        return json.load(f)
+def fuzzy_variants(value: str) -> set[str]:
+    cleaned = (value or "").strip()
+    if not cleaned:
+        return set()
 
+    lowered = cleaned.lower()
+    compact = lowered.replace(" ", "").replace("-", "").replace("_", "")
+    dashed = lowered.replace(" ", "-").replace("_", "-")
+    underscored = lowered.replace(" ", "_").replace("-", "_")
 
-def fuzzy_variants(term):
-    variants = {term.lower(), term.replace(" ", ""), term.replace(".", "")}
-    if "@" in term:
-        local, domain = term.split("@")
-        variants.add(local + "@" + domain.replace("gmail", "gma1l"))
-    return variants
+    variants = {cleaned, lowered, compact, dashed, underscored}
 
+    if "@" in lowered:
+        local_part, _, domain = lowered.partition("@")
+        variants.add(f"{local_part} [at] {domain}")
+        variants.add(f"{local_part}(at){domain}")
+        variants.add(f"{local_part} at {domain}")
 
+    if "." in lowered:
+        variants.add(lowered.replace(".", "[.]"))
+        variants.add(lowered.replace(".", " dot "))
+
+    return {item for item in variants if item}
