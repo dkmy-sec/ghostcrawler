@@ -18,10 +18,14 @@ sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 from core.crawler import crawl_onion
 from core.analyst_workbench import (
+    add_campaign,
     add_saved_hunt,
     add_watchlist,
     load_analyst_alerts,
+    load_campaign_links,
+    load_campaigns,
     load_saved_hunts,
+    load_source_reliability,
     load_watchlist_hits,
     load_watchlists,
     refresh_analyst_signals,
@@ -284,7 +288,7 @@ if st.sidebar.button("Generate Intel Report", use_container_width=True):
 if st.sidebar.button("Refresh Analyst Signals", use_container_width=True):
     refresh_stats = refresh_analyst_signals()
     st.sidebar.success(
-        f"Rules refreshed: {refresh_stats['watchlist_matches']} watchlist hit(s), {refresh_stats['hunt_matches']} hunt hit(s)."
+        f"Rules refreshed: {refresh_stats['watchlist_matches']} watchlist, {refresh_stats['hunt_matches']} hunt, {refresh_stats['campaign_links']} campaign, {refresh_stats['reliability_updates']} reliability update(s)."
     )
 
 seed_url = st.sidebar.text_input("Target URL", value="http://vfnmxpa6fo4jdpyq3yneqhglluweax2uclvxkytfpmpkp5rsl75ir5qd.onion")
@@ -305,6 +309,9 @@ watchlists_df = load_watchlists()
 saved_hunts_df = load_saved_hunts()
 watchlist_hits_df = load_watchlist_hits()
 analyst_alerts_df = load_analyst_alerts()
+campaigns_df = load_campaigns()
+campaign_links_df = load_campaign_links()
+source_reliability_df = load_source_reliability()
 
 latest_seen = "No telemetry"
 if not scoped_sources.empty:
@@ -341,7 +348,7 @@ cards = [
     ("Critical Day-Zero", critical_zero_day, "Immediate analyst queue"),
     ("Signals In Queue", len(scoped_zero_day.index), "Exploit and disclosure leads"),
     ("Evidence Records", len(scoped_findings.index), "Harvested exposure artifacts"),
-    ("Fetch-Ready Coverage", f"{coverage_pct}%", f"{fetch_ready} sources collectable now"),
+    ("Active Campaigns", int(len(campaigns_df.index)), "Research narratives and clusters"),
     ("Frontier Pending", pending, "Queued for deeper traversal"),
 ]
 for column, (label, value, foot) in zip(metric_cols, cards):
@@ -376,6 +383,11 @@ with command_tab:
             st.info("No rule-driven alerts yet.")
         else:
             st.dataframe(analyst_alerts_df.head(8), use_container_width=True, hide_index=True)
+        st.markdown('<div class="panel"><div class="label">Source Reliability</div><div class="foot">Ranked sources based on freshness, evidence yield, day-zero relevance, and watchlist hits.</div></div>', unsafe_allow_html=True)
+        if source_reliability_df.empty:
+            st.info("No reliability scores yet. Refresh analyst signals to compute them.")
+        else:
+            st.dataframe(source_reliability_df.head(8), use_container_width=True, hide_index=True)
         coverage = scoped_sources.copy()
         if not coverage.empty:
             coverage["network_name"] = coverage["network"].fillna(coverage["url"].map(classify_network)).map(network_label)
@@ -439,12 +451,33 @@ with rules_tab:
             else:
                 st.warning("Name and query are required.")
 
-    summary_cols = st.columns(4)
+    st.markdown("#### Add Campaign")
+    with st.form("campaign_form", clear_on_submit=True):
+        campaign_cols = st.columns(2)
+        with campaign_cols[0]:
+            campaign_name = st.text_input("Campaign name", placeholder="Storm Broker Access Cluster")
+            campaign_actor = st.text_input("Actor / Cluster", placeholder="storm-broker, intrusion set, alias")
+            campaign_type = st.selectbox("Campaign type", ["tracking", "actor", "malware", "extortion", "broker", "zero-day"])
+        with campaign_cols[1]:
+            campaign_severity = st.selectbox("Campaign severity", ["critical", "high", "medium", "low"], index=1)
+            campaign_tags = st.text_input("Campaign tags", placeholder="vpn, broker, extortion")
+            campaign_description = st.text_area("Description", placeholder="Cluster evidence, signals, and sources under a shared research narrative.")
+        campaign_submit = st.form_submit_button("Save Campaign", use_container_width=True)
+    if campaign_submit:
+        if campaign_name.strip():
+            add_campaign(campaign_name, campaign_description, campaign_actor, campaign_type, campaign_severity, campaign_tags)
+            st.success("Campaign saved.")
+            st.rerun()
+        else:
+            st.warning("Campaign name is required.")
+
+    summary_cols = st.columns(5)
     summaries = [
         ("Active Watchlists", int(len(watchlists_df.index)), "Repeatable IOC monitors"),
         ("Saved Hunts", int(len(saved_hunts_df.index)), "Reusable analyst pivots"),
         ("Watchlist Hits", int(len(watchlist_hits_df.index)), "Matched artifacts and signals"),
         ("Analyst Alerts", int(len(analyst_alerts_df.index)), "Open rule-driven notifications"),
+        ("Campaign Links", int(len(campaign_links_df.index)), "Evidence clustered into narratives"),
     ]
     for column, (label, value, foot) in zip(summary_cols, summaries):
         column.markdown(
@@ -466,6 +499,12 @@ with rules_tab:
         else:
             st.dataframe(watchlist_hits_df, use_container_width=True, hide_index=True)
 
+        st.markdown("#### Source Reliability Rankings")
+        if source_reliability_df.empty:
+            st.info("No source reliability scores yet.")
+        else:
+            st.dataframe(source_reliability_df, use_container_width=True, hide_index=True)
+
     with top_right:
         st.markdown("#### Saved Hunts")
         if saved_hunts_df.empty:
@@ -478,6 +517,18 @@ with rules_tab:
             st.info("No analyst alerts yet.")
         else:
             st.dataframe(analyst_alerts_df, use_container_width=True, hide_index=True)
+
+        st.markdown("#### Campaigns")
+        if campaigns_df.empty:
+            st.info("No campaigns created yet.")
+        else:
+            st.dataframe(campaigns_df, use_container_width=True, hide_index=True)
+
+        st.markdown("#### Campaign Links")
+        if campaign_links_df.empty:
+            st.info("No campaign links yet. Refresh analyst signals after adding campaigns.")
+        else:
+            st.dataframe(campaign_links_df, use_container_width=True, hide_index=True)
 
 with evidence_tab:
     left, right = st.columns(2)
@@ -503,6 +554,18 @@ with evidence_tab:
         st.dataframe(alerts_df, use_container_width=True, hide_index=True) if not alerts_df.empty else st.info("No alerts in this scope.")
     else:
         st.info("No alert feed has been generated yet.")
+    st.markdown("#### Campaign And Reliability Context")
+    context_left, context_right = st.columns(2)
+    with context_left:
+        if campaigns_df.empty:
+            st.info("No campaign context yet.")
+        else:
+            st.dataframe(campaigns_df.head(10), use_container_width=True, hide_index=True)
+    with context_right:
+        if source_reliability_df.empty:
+            st.info("No reliability context yet.")
+        else:
+            st.dataframe(source_reliability_df.head(10), use_container_width=True, hide_index=True)
     if PDF_REPORT.exists():
         st.download_button("Download threat intel PDF", PDF_REPORT.read_bytes(), file_name="ghostcrawler_threat_report.pdf", use_container_width=True)
 

@@ -255,6 +255,68 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS campaigns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                description TEXT,
+                actor TEXT,
+                campaign_type TEXT DEFAULT 'tracking',
+                severity TEXT DEFAULT 'medium',
+                tags TEXT,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS campaign_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                campaign_id INTEGER NOT NULL,
+                source_table TEXT NOT NULL,
+                source_ref TEXT NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT,
+                network TEXT DEFAULT 'unknown',
+                confidence INTEGER DEFAULT 50,
+                rationale TEXT,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_campaign_link_unique
+            ON campaign_links(campaign_id, source_table, source_ref, title)
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_reliability (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL UNIQUE,
+                network TEXT DEFAULT 'unknown',
+                source TEXT,
+                tag TEXT,
+                score INTEGER DEFAULT 0,
+                confidence INTEGER DEFAULT 50,
+                evidence_count INTEGER DEFAULT 0,
+                zero_day_count INTEGER DEFAULT 0,
+                watchlist_hit_count INTEGER DEFAULT 0,
+                freshness_days INTEGER DEFAULT 999,
+                rationale TEXT,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
         _seed_multi_network_sources(conn)
         _seed_zero_day_signals(conn)
         conn.commit()

@@ -109,6 +109,80 @@ def load_analyst_alerts(limit: int = 100) -> pd.DataFrame:
         )
 
 
+def add_campaign(name: str, description: str, actor: str, campaign_type: str, severity: str, tags: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO campaigns (name, description, actor, campaign_type, severity, tags)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                description=excluded.description,
+                actor=excluded.actor,
+                campaign_type=excluded.campaign_type,
+                severity=excluded.severity,
+                tags=excluded.tags,
+                last_seen=CURRENT_TIMESTAMP
+            """,
+            (name.strip(), description.strip(), actor.strip(), campaign_type, severity, tags.strip()),
+        )
+        conn.commit()
+
+
+def load_campaigns() -> pd.DataFrame:
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT
+                c.id, c.name, c.actor, c.campaign_type, c.severity, c.tags, c.status, c.last_seen,
+                COUNT(cl.id) AS linked_records
+            FROM campaigns c
+            LEFT JOIN campaign_links cl ON cl.campaign_id = c.id
+            GROUP BY c.id, c.name, c.actor, c.campaign_type, c.severity, c.tags, c.status, c.last_seen
+            ORDER BY c.last_seen DESC, c.created_at DESC
+            """,
+            conn,
+        )
+
+
+def load_campaign_links(limit: int = 100) -> pd.DataFrame:
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT
+                cl.id,
+                c.name AS campaign_name,
+                cl.source_table,
+                cl.title,
+                cl.url,
+                cl.network,
+                cl.confidence,
+                cl.rationale,
+                cl.last_seen
+            FROM campaign_links cl
+            JOIN campaigns c ON c.id = cl.campaign_id
+            ORDER BY cl.last_seen DESC
+            LIMIT ?
+            """,
+            conn,
+            params=(limit,),
+        )
+
+
+def load_source_reliability(limit: int = 100) -> pd.DataFrame:
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT url, network, source, tag, score, confidence, evidence_count,
+                   zero_day_count, watchlist_hit_count, freshness_days, rationale, updated_at
+            FROM source_reliability
+            ORDER BY score DESC, confidence DESC, updated_at DESC
+            LIMIT ?
+            """,
+            conn,
+            params=(limit,),
+        )
+
+
 def evaluate_watchlists() -> int:
     with get_connection() as conn:
         rules = pd.read_sql_query(
@@ -313,4 +387,157 @@ def _persist_hunt_alert(conn: sqlite3.Connection, hunt: pd.Series, summary: str,
 def refresh_analyst_signals() -> dict:
     watchlist_matches = evaluate_watchlists()
     hunt_matches = evaluate_saved_hunts()
-    return {"watchlist_matches": watchlist_matches, "hunt_matches": hunt_matches}
+    campaign_links = refresh_campaign_links()
+    reliability_updates = refresh_source_reliability()
+    return {
+        "watchlist_matches": watchlist_matches,
+        "hunt_matches": hunt_matches,
+        "campaign_links": campaign_links,
+        "reliability_updates": reliability_updates,
+    }
+
+
+def refresh_campaign_links() -> int:
+    with get_connection() as conn:
+        campaigns = pd.read_sql_query(
+            """
+            SELECT id, name, description, actor, campaign_type, severity, tags
+            FROM campaigns
+            WHERE status = 'active'
+            """,
+            conn,
+        )
+        if campaigns.empty:
+            return 0
+
+        sources = pd.read_sql_query("SELECT id, url, source, tag, network FROM onions", conn)
+        findings = pd.read_sql_query("SELECT id, url, leak_type, value, snippet, network FROM data_leaks", conn)
+        signals = pd.read_sql_query("SELECT id, title, indicator, details, url, network FROM zero_day_signals", conn)
+        created = 0
+
+        for _, campaign in campaigns.iterrows():
+            terms = {
+                (campaign.get("name") or "").strip().lower(),
+                (campaign.get("actor") or "").strip().lower(),
+            }
+            terms.update(
+                part.strip().lower()
+                for part in str(campaign.get("tags") or "").split(",")
+                if part.strip()
+            )
+            terms = {term for term in terms if term}
+            if not terms:
+                continue
+
+            for _, row in sources.iterrows():
+                haystack = " ".join(str(row.get(col, "")) for col in ["url", "source", "tag"]).lower()
+                matched = next((term for term in terms if term in haystack), None)
+                if matched:
+                    created += _persist_campaign_link(
+                        conn, campaign, "onions", str(row["id"]), row.get("url") or matched, row.get("url"), row.get("network"), 60, f"Matched source metadata on '{matched}'"
+                    )
+
+            for _, row in findings.iterrows():
+                haystack = " ".join(str(row.get(col, "")) for col in ["value", "snippet", "url"]).lower()
+                matched = next((term for term in terms if term in haystack), None)
+                if matched:
+                    created += _persist_campaign_link(
+                        conn, campaign, "data_leaks", str(row["id"]), f"{row.get('leak_type', 'finding')} match", row.get("url"), row.get("network"), 70, f"Matched evidence on '{matched}'"
+                    )
+
+            for _, row in signals.iterrows():
+                haystack = " ".join(str(row.get(col, "")) for col in ["title", "indicator", "details", "url"]).lower()
+                matched = next((term for term in terms if term in haystack), None)
+                if matched:
+                    created += _persist_campaign_link(
+                        conn, campaign, "zero_day_signals", str(row["id"]), row.get("title") or row.get("indicator") or matched, row.get("url"), row.get("network"), 82, f"Matched exploit signal on '{matched}'"
+                    )
+
+            conn.execute("UPDATE campaigns SET last_seen = CURRENT_TIMESTAMP WHERE id = ?", (int(campaign["id"]),))
+
+        conn.commit()
+        return created
+
+
+def _persist_campaign_link(conn: sqlite3.Connection, campaign: pd.Series, source_table: str, source_ref: str, title: str, url: str, network: str, confidence: int, rationale: str) -> int:
+    cursor = conn.execute(
+        """
+        INSERT INTO campaign_links (campaign_id, source_table, source_ref, title, url, network, confidence, rationale)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(campaign_id, source_table, source_ref, title)
+        DO UPDATE SET last_seen=CURRENT_TIMESTAMP, confidence=excluded.confidence, rationale=excluded.rationale
+        """,
+        (int(campaign["id"]), source_table, source_ref, title, url, network or classify_network(url), confidence, rationale),
+    )
+    return 1 if cursor.rowcount else 0
+
+
+def refresh_source_reliability() -> int:
+    with get_connection() as conn:
+        sources = pd.read_sql_query("SELECT url, source, tag, network, priority, last_seen FROM onions", conn)
+        if sources.empty:
+            return 0
+
+        findings = pd.read_sql_query("SELECT url FROM data_leaks", conn)
+        zero_day = pd.read_sql_query("SELECT url, severity FROM zero_day_signals", conn)
+        watch_hits = pd.read_sql_query("SELECT url FROM watchlist_hits", conn)
+
+        evidence_counts = findings["url"].value_counts().to_dict() if not findings.empty else {}
+        zero_counts = zero_day["url"].value_counts().to_dict() if not zero_day.empty else {}
+        hit_counts = watch_hits["url"].value_counts().to_dict() if not watch_hits.empty else {}
+
+        updates = 0
+        for _, row in sources.iterrows():
+            url = row.get("url")
+            freshness_days = int(max((pd.Timestamp.utcnow() - pd.to_datetime(row.get("last_seen"), errors="coerce", utc=True)).days, 0)) if pd.notna(pd.to_datetime(row.get("last_seen"), errors="coerce", utc=True)) else 999
+            evidence_count = int(evidence_counts.get(url, 0))
+            zero_count = int(zero_counts.get(url, 0))
+            hit_count = int(hit_counts.get(url, 0))
+            base = 20
+            score = base
+            score += min(evidence_count * 8, 30)
+            score += min(zero_count * 18, 36)
+            score += min(hit_count * 6, 18)
+            score += 10 if row.get("priority") == "priority" else 0
+            score += 8 if freshness_days <= 3 else 4 if freshness_days <= 14 else 0
+            confidence = min(45 + evidence_count * 8 + zero_count * 12 + hit_count * 5, 95)
+            rationale = f"evidence={evidence_count}, zero_day={zero_count}, watchlist={hit_count}, freshness_days={freshness_days}"
+
+            conn.execute(
+                """
+                INSERT INTO source_reliability (
+                    url, network, source, tag, score, confidence, evidence_count,
+                    zero_day_count, watchlist_hit_count, freshness_days, rationale
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(url) DO UPDATE SET
+                    network=excluded.network,
+                    source=excluded.source,
+                    tag=excluded.tag,
+                    score=excluded.score,
+                    confidence=excluded.confidence,
+                    evidence_count=excluded.evidence_count,
+                    zero_day_count=excluded.zero_day_count,
+                    watchlist_hit_count=excluded.watchlist_hit_count,
+                    freshness_days=excluded.freshness_days,
+                    rationale=excluded.rationale,
+                    updated_at=CURRENT_TIMESTAMP
+                """,
+                (
+                    url,
+                    row.get("network") or classify_network(url),
+                    row.get("source"),
+                    row.get("tag"),
+                    int(min(score, 100)),
+                    int(confidence),
+                    evidence_count,
+                    zero_count,
+                    hit_count,
+                    freshness_days,
+                    rationale,
+                ),
+            )
+            updates += 1
+
+        conn.commit()
+        return updates
