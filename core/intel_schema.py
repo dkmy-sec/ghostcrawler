@@ -169,6 +169,92 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS watchlists (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                indicator TEXT NOT NULL,
+                indicator_type TEXT DEFAULT 'keyword',
+                severity TEXT DEFAULT 'medium',
+                tags TEXT,
+                scope TEXT DEFAULT 'All Sources',
+                fuzzy_match INTEGER DEFAULT 1,
+                enabled INTEGER DEFAULT 1,
+                hit_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_hit_at TIMESTAMP
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS saved_hunts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                query TEXT NOT NULL,
+                description TEXT,
+                scope TEXT DEFAULT 'All Sources',
+                severity TEXT DEFAULT 'medium',
+                enabled INTEGER DEFAULT 1,
+                hit_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_run TIMESTAMP,
+                last_hit_at TIMESTAMP
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS watchlist_hits (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                watchlist_id INTEGER NOT NULL,
+                source_table TEXT NOT NULL,
+                source_ref TEXT NOT NULL,
+                matched_value TEXT NOT NULL,
+                url TEXT,
+                network TEXT DEFAULT 'unknown',
+                context TEXT,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (watchlist_id) REFERENCES watchlists(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_watchlist_hit_unique
+            ON watchlist_hits(watchlist_id, source_table, source_ref, matched_value)
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS analyst_alerts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alert_kind TEXT NOT NULL,
+                rule_id INTEGER NOT NULL,
+                rule_name TEXT NOT NULL,
+                severity TEXT DEFAULT 'medium',
+                title TEXT NOT NULL,
+                summary TEXT,
+                url TEXT,
+                network TEXT DEFAULT 'unknown',
+                status TEXT DEFAULT 'open',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_analyst_alert_unique
+            ON analyst_alerts(alert_kind, rule_id, title, url, summary)
+            """
+        )
+
         _seed_multi_network_sources(conn)
         _seed_zero_day_signals(conn)
         conn.commit()

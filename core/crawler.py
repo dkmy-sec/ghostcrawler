@@ -230,7 +230,7 @@ def crawl_onion(url: str, depth: int = 0, max_depth: int = 4) -> dict:
     return crawl_target(url, depth=depth, max_depth=max_depth)
 
 
-def crawl_seed_batch(limit: int = 10, max_depth: int = 2) -> list[dict]:
+def crawl_seed_batch(limit: int = 12, max_depth: int = 4) -> list[dict]:
     with get_connection() as conn:
         rows = conn.execute(
             """

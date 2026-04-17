@@ -15,12 +15,12 @@ from core.safeguard import is_high_risk
 DB = DATA_DIR / "onion_sources.db"
 
 # Controls
-MAX_DEPTH = 5
+MAX_DEPTH = 8
 MAX_TOTAL_PAGES = 5000          # total pages fetched per run
 MAX_NEW_ENQUEUE = 20000         # safety cap so frontier doesn't explode in one run
 MAX_TRIES = 2                   # retry failures a couple times
 SLEEP_BETWEEN = 0.15            # be gentle on Tor + remote services
-PER_HOST_CAP = 250              # prevent one mega-site from consuming the crawl
+PER_HOST_CAP = 400              # prevent one mega-site from consuming the crawl
 
 def host_of(u: str) -> str:
     try:
