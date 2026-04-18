@@ -316,6 +316,79 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             )
             """
         )
+        _ensure_column(conn, "source_reliability", "analyst_override", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "source_reliability", "health", "TEXT DEFAULT 'active'")
+        _ensure_column(conn, "source_reliability", "decay_penalty", "INTEGER DEFAULT 0")
+        _ensure_column(conn, "source_reliability", "override_note", "TEXT")
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS source_health_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL,
+                health TEXT NOT NULL,
+                note TEXT,
+                author TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                summary TEXT,
+                owner TEXT,
+                status TEXT DEFAULT 'open',
+                severity TEXT DEFAULT 'medium',
+                campaign_id INTEGER,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (campaign_id) REFERENCES campaigns(id)
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS case_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id INTEGER NOT NULL,
+                source_table TEXT NOT NULL,
+                source_ref TEXT NOT NULL,
+                title TEXT NOT NULL,
+                url TEXT,
+                network TEXT DEFAULT 'unknown',
+                link_type TEXT DEFAULT 'evidence',
+                confidence INTEGER DEFAULT 50,
+                first_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (case_id) REFERENCES cases(id)
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_case_link_unique
+            ON case_links(case_id, source_table, source_ref, title)
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS case_notes (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id INTEGER NOT NULL,
+                author TEXT,
+                note TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (case_id) REFERENCES cases(id)
+            )
+            """
+        )
 
         _seed_multi_network_sources(conn)
         _seed_zero_day_signals(conn)

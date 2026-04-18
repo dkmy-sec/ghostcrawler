@@ -4,20 +4,17 @@ import logging
 import re
 import sqlite3
 from pathlib import Path
-from urllib.parse import urljoin
-
-import requests
-from bs4 import BeautifulSoup
-from requests_tor import RequestsTor
 
 try:
+    from core.connectors import get_connector_for_url, supports_fetch
     from core.intel_schema import ensure_database
-    from core.network_catalog import classify_network, supports_fetch
+    from core.network_catalog import classify_network
     from core.utils import DATA_DIR
 except ImportError:
     DATA_DIR = Path(__file__).parent.parent / "data"
+    from connectors import get_connector_for_url, supports_fetch
     from intel_schema import ensure_database
-    from network_catalog import classify_network, supports_fetch
+    from network_catalog import classify_network
 
 
 DB_PATH = DATA_DIR / "onion_sources.db"
@@ -33,15 +30,6 @@ ZERO_DAY_PATTERNS = {
     "active_exploitation": re.compile(r"\b(?:exploited in the wild|active exploitation|mass exploitation)\b", re.IGNORECASE),
     "critical_cve": re.compile(r"\bCVE-\d{4}-\d{4,7}\b.{0,80}\b(?:rce|auth bypass|sandbox escape|privilege escalation)\b", re.IGNORECASE),
 }
-
-
-def get_tor_session():
-    return RequestsTor(tor_ports=(9050,), autochange_id=False)
-
-
-def get_clear_session():
-    return requests.Session()
-
 
 def get_connection():
     return sqlite3.connect(DB_PATH)
@@ -159,22 +147,27 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
             "found_links": [],
         }
 
-    session = get_tor_session() if network == "tor" else get_clear_session()
+    connector = get_connector_for_url(url)
 
     try:
-        if network == "tor" and hasattr(session, "reset_identity"):
-            session.reset_identity()
-
-        response = session.get(url, headers={"User-Agent": "Ghostcrawler/1.0"}, timeout=20)
-        html = response.text
+        fetched = connector.fetch(url)
+        if fetched.error:
+            return {
+                "url": url,
+                "network": network,
+                "connector": fetched.connector,
+                "error": fetched.error,
+                "found_onions": [],
+                "found_links": [],
+            }
+        html = fetched.html or ""
 
         snapshot_dir = DATA_DIR / "snapshots"
         snapshot_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{url.replace('http://', '').replace('https://', '').replace('/', '_')}.html"
         (snapshot_dir / filename).write_text(html, encoding="utf-8", errors="ignore")
 
-        soup = BeautifulSoup(html, "html.parser")
-        text = soup.get_text(" ", strip=True)
+        text = fetched.text or ""
         leaks = harvest_leaks(text, url)
         zero_day_signals = detect_zero_day_signals(text, url)
 
@@ -192,18 +185,16 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
                     logging.error("DB error saving leak for %s: %s", url, exc)
 
             found_links = []
-            for link in soup.find_all("a", href=True):
-                full_url = urljoin(url, link["href"])
+            for full_url in fetched.links or []:
                 child_network = classify_network(full_url)
-                if child_network == network or (network == "clearnet" and child_network == "clearnet"):
-                    found_links.append(full_url)
-                    conn.execute(
-                        """
-                        INSERT OR IGNORE INTO onions (url, source, tag, depth, quarantined, network, collector)
-                        VALUES (?, ?, ?, ?, 0, ?, ?)
-                        """,
-                        (full_url, url, classify_onion(full_url), depth + 1, child_network, "crawler"),
-                    )
+                found_links.append(full_url)
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO onions (url, source, tag, depth, quarantined, network, collector)
+                    VALUES (?, ?, ?, ?, 0, ?, ?)
+                    """,
+                    (full_url, url, classify_onion(full_url), depth + 1, child_network, connector.name),
+                )
 
             conn.commit()
 
@@ -216,6 +207,7 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
         return {
             "url": url,
             "network": network,
+            "connector": connector.name,
             "snapshot_file": filename,
             "found_onions": found_links,
             "found_links": found_links,

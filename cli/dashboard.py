@@ -16,22 +16,30 @@ from requests_tor import RequestsTor
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
+from core.connectors import connector_status_frame, supports_fetch
 from core.crawler import crawl_onion
 from core.analyst_workbench import (
+    add_case,
     add_campaign,
+    add_case_note,
     add_saved_hunt,
     add_watchlist,
     load_analyst_alerts,
     load_campaign_links,
     load_campaigns,
+    load_case_links,
+    load_case_notes,
+    load_cases,
     load_saved_hunts,
+    load_source_health_events,
     load_source_reliability,
     load_watchlist_hits,
     load_watchlists,
     refresh_analyst_signals,
+    update_source_override,
 )
 from core.intel_schema import ensure_database
-from core.network_catalog import classify_network, classify_scope, network_label, supports_fetch
+from core.network_catalog import classify_network, classify_scope, network_label
 from core.search_engine import build_index, search
 from core.utils import DATA_DIR
 
@@ -312,6 +320,11 @@ analyst_alerts_df = load_analyst_alerts()
 campaigns_df = load_campaigns()
 campaign_links_df = load_campaign_links()
 source_reliability_df = load_source_reliability()
+source_health_events_df = load_source_health_events()
+cases_df = load_cases()
+case_links_df = load_case_links()
+case_notes_df = load_case_notes()
+connector_status_df = pd.DataFrame(connector_status_frame())
 
 latest_seen = "No telemetry"
 if not scoped_sources.empty:
@@ -348,14 +361,14 @@ cards = [
     ("Critical Day-Zero", critical_zero_day, "Immediate analyst queue"),
     ("Signals In Queue", len(scoped_zero_day.index), "Exploit and disclosure leads"),
     ("Evidence Records", len(scoped_findings.index), "Harvested exposure artifacts"),
-    ("Active Campaigns", int(len(campaigns_df.index)), "Research narratives and clusters"),
+    ("Open Cases", int(len(cases_df.index)), "Operational investigations in progress"),
     ("Frontier Pending", pending, "Queued for deeper traversal"),
 ]
 for column, (label, value, foot) in zip(metric_cols, cards):
     column.markdown(f'<div class="metric"><div class="label">{label}</div><div class="value">{value}</div><div class="foot">{foot}</div></div>', unsafe_allow_html=True)
 
-command_tab, hunt_tab, rules_tab, evidence_tab, ops_tab = st.tabs(
-    ["Command Deck", "Hunt Workbench", "Watchlists & Hunts", "Evidence Locker", "Collection Lab"]
+command_tab, hunt_tab, rules_tab, cases_tab, evidence_tab, ops_tab = st.tabs(
+    ["Command Deck", "Hunt Workbench", "Watchlists & Hunts", "Cases", "Evidence Locker", "Collection Lab"]
 )
 
 with command_tab:
@@ -388,6 +401,12 @@ with command_tab:
             st.info("No reliability scores yet. Refresh analyst signals to compute them.")
         else:
             st.dataframe(source_reliability_df.head(8), use_container_width=True, hide_index=True)
+            st.caption("Scores now include decay for aging sources plus analyst override and health-state adjustments.")
+        st.markdown('<div class="panel"><div class="label">Connector Readiness</div><div class="foot">Plugin-style collector adapters by network, showing what is ready now versus partially scaffolded.</div></div>', unsafe_allow_html=True)
+        if connector_status_df.empty:
+            st.info("No connector metadata loaded.")
+        else:
+            st.dataframe(connector_status_df, use_container_width=True, hide_index=True)
         coverage = scoped_sources.copy()
         if not coverage.empty:
             coverage["network_name"] = coverage["network"].fillna(coverage["url"].map(classify_network)).map(network_label)
@@ -396,6 +415,7 @@ with command_tab:
             st.dataframe(coverage_matrix.head(16), use_container_width=True, hide_index=True)
 
 with hunt_tab:
+    st.caption("Search pivots now normalize common IOC/entity formats and suppress obvious duplicate matches before they become analyst noise.")
     query = st.text_input("Indicator, actor alias, domain, CVE, or organization", placeholder="CVE-2026-12345, org name, alias, domain, hash fragment")
     if query:
         index_results = apply_scope_filter(pd.DataFrame(search(query)), scope)
@@ -403,16 +423,22 @@ with hunt_tab:
         left, right = st.columns(2)
         with left:
             st.markdown("#### Indexed Snapshot Matches")
-            st.dataframe(index_results, use_container_width=True, hide_index=True) if not index_results.empty else st.info("No indexed matches.")
+            if not index_results.empty:
+                st.dataframe(index_results, use_container_width=True, hide_index=True)
+            else:
+                st.info("No indexed matches.")
         with right:
             st.markdown("#### Evidence and Signal Matches")
-            st.dataframe(evidence_results, use_container_width=True, hide_index=True) if not evidence_results.empty else st.info("No evidence or signal matches.")
+            if not evidence_results.empty:
+                st.dataframe(evidence_results, use_container_width=True, hide_index=True)
+            else:
+                st.info("No evidence or signal matches.")
     else:
         st.info("Start with a CVE, org, domain, hash fragment, alias, or keyword to pivot through the local corpus.")
 
 with rules_tab:
     st.subheader("Watchlists And Saved Hunts")
-    st.caption("Create repeatable analyst rules, then refresh them into hits and alert records as new data lands.")
+    st.caption("Create repeatable analyst rules with stronger normalization, entity-aware matching, and duplicate suppression before alerts are raised.")
 
     create_left, create_right = st.columns(2)
     with create_left:
@@ -504,6 +530,20 @@ with rules_tab:
             st.info("No source reliability scores yet.")
         else:
             st.dataframe(source_reliability_df, use_container_width=True, hide_index=True)
+            override_options = source_reliability_df["url"].dropna().tolist()
+            if override_options:
+                st.markdown("#### Reliability Override")
+                with st.form("source_override_form", clear_on_submit=True):
+                    override_url = st.selectbox("Source URL", override_options)
+                    override_health = st.selectbox("Health", ["active", "monitored", "stale", "degraded", "blocked"], index=0)
+                    override_score = st.slider("Analyst override", min_value=-30, max_value=30, value=0, help="Positive values raise trust. Negative values suppress noisy or untrusted sources.")
+                    override_author = st.text_input("Author", placeholder="Analyst name")
+                    override_note = st.text_area("Override note", placeholder="Why the source is trusted, noisy, stale, degraded, or blocked.")
+                    override_submit = st.form_submit_button("Apply Override", use_container_width=True)
+                if override_submit:
+                    update_source_override(override_url, override_health, override_score, override_note, override_author)
+                    st.success("Source override saved.")
+                    st.rerun()
 
     with top_right:
         st.markdown("#### Saved Hunts")
@@ -530,6 +570,88 @@ with rules_tab:
         else:
             st.dataframe(campaign_links_df, use_container_width=True, hide_index=True)
 
+        st.markdown("#### Source Health Events")
+        if source_health_events_df.empty:
+            st.info("No source health events yet.")
+        else:
+            st.dataframe(source_health_events_df, use_container_width=True, hide_index=True)
+
+with cases_tab:
+    st.subheader("Case Desk")
+    st.caption("Turn campaigns, alerts, and linked evidence into operational investigations with ownership, status, and notes.")
+
+    case_left, case_right = st.columns(2)
+    campaign_options = {"No campaign": None}
+    if not campaigns_df.empty:
+        for _, row in campaigns_df.iterrows():
+            campaign_options[f"{row['name']} ({row['linked_records']} linked)"] = int(row["id"])
+
+    with case_left:
+        st.markdown("#### Open Case")
+        with st.form("case_form", clear_on_submit=True):
+            case_title = st.text_input("Case title", placeholder="Broker access cluster - April review")
+            case_summary = st.text_area("Case summary", placeholder="What is being investigated and why it matters.")
+            case_owner = st.text_input("Owner", placeholder="Analyst name or team")
+            case_severity = st.selectbox("Case severity", ["critical", "high", "medium", "low"], index=1)
+            case_status = st.selectbox("Case status", ["open", "triage", "monitoring", "contained", "closed"], index=0)
+            selected_campaign_label = st.selectbox("Seed from campaign", list(campaign_options.keys()), index=0)
+            case_submit = st.form_submit_button("Create Case", use_container_width=True)
+        if case_submit:
+            if case_title.strip():
+                add_case(
+                    case_title,
+                    case_summary,
+                    case_owner,
+                    case_severity,
+                    case_status,
+                    campaign_options[selected_campaign_label],
+                )
+                st.success("Case created.")
+                st.rerun()
+            else:
+                st.warning("Case title is required.")
+
+        st.markdown("#### Cases")
+        if cases_df.empty:
+            st.info("No cases yet.")
+        else:
+            st.dataframe(cases_df, use_container_width=True, hide_index=True)
+
+    with case_right:
+        st.markdown("#### Add Case Note")
+        case_note_options = {}
+        if not cases_df.empty:
+            for _, row in cases_df.iterrows():
+                case_note_options[f"{row['title']} [{row['status']}]"] = int(row["id"])
+
+        if not case_note_options:
+            st.info("Create a case first, then add notes.")
+        else:
+            with st.form("case_note_form", clear_on_submit=True):
+                selected_case_label = st.selectbox("Case", list(case_note_options.keys()))
+                note_author = st.text_input("Author", placeholder="Analyst name")
+                note_text = st.text_area("Note", placeholder="Assessment, pivot path, next steps, or evidence summary.")
+                note_submit = st.form_submit_button("Add Note", use_container_width=True)
+            if note_submit:
+                if note_text.strip():
+                    add_case_note(case_note_options[selected_case_label], note_author, note_text)
+                    st.success("Case note added.")
+                    st.rerun()
+                else:
+                    st.warning("Note text is required.")
+
+        st.markdown("#### Case Links")
+        if case_links_df.empty:
+            st.info("No case links yet. Cases seeded from campaigns will inherit linked records.")
+        else:
+            st.dataframe(case_links_df, use_container_width=True, hide_index=True)
+
+        st.markdown("#### Case Notes")
+        if case_notes_df.empty:
+            st.info("No case notes yet.")
+        else:
+            st.dataframe(case_notes_df, use_container_width=True, hide_index=True)
+
 with evidence_tab:
     left, right = st.columns(2)
     with left:
@@ -551,7 +673,10 @@ with evidence_tab:
     st.markdown("#### Alert Feed")
     if ALERTS_PATH.exists():
         alerts_df = apply_scope_filter(pd.DataFrame(json.loads(ALERTS_PATH.read_text(encoding="utf-8"))), scope)
-        st.dataframe(alerts_df, use_container_width=True, hide_index=True) if not alerts_df.empty else st.info("No alerts in this scope.")
+        if not alerts_df.empty:
+            st.dataframe(alerts_df, use_container_width=True, hide_index=True)
+        else:
+            st.info("No alerts in this scope.")
     else:
         st.info("No alert feed has been generated yet.")
     st.markdown("#### Campaign And Reliability Context")

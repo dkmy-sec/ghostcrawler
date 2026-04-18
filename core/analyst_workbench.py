@@ -4,6 +4,7 @@ import sqlite3
 
 import pandas as pd
 
+from core.hunt_quality import dedupe_records, extract_entities, normalize_text, normalized_variants, score_match
 from core.intel_schema import DB_PATH, ensure_database
 from core.network_catalog import classify_network, classify_scope
 from core.search_engine import search
@@ -173,9 +174,191 @@ def load_source_reliability(limit: int = 100) -> pd.DataFrame:
         return pd.read_sql_query(
             """
             SELECT url, network, source, tag, score, confidence, evidence_count,
-                   zero_day_count, watchlist_hit_count, freshness_days, rationale, updated_at
+                   zero_day_count, watchlist_hit_count, freshness_days, health,
+                   analyst_override, decay_penalty, rationale, override_note, updated_at
             FROM source_reliability
             ORDER BY score DESC, confidence DESC, updated_at DESC
+            LIMIT ?
+            """,
+            conn,
+            params=(limit,),
+        )
+
+
+def update_source_override(url: str, health: str, analyst_override: int, override_note: str, author: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO source_reliability (url, network, health, analyst_override, override_note)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(url) DO UPDATE SET
+                health=excluded.health,
+                analyst_override=excluded.analyst_override,
+                override_note=excluded.override_note,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (url, classify_network(url), health, int(analyst_override), override_note.strip()),
+        )
+        conn.execute(
+            """
+            INSERT INTO source_health_events (url, health, note, author)
+            VALUES (?, ?, ?, ?)
+            """,
+            (url, health, override_note.strip(), author.strip()),
+        )
+        conn.commit()
+
+
+def load_source_health_events(limit: int = 100) -> pd.DataFrame:
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT url, health, note, author, created_at
+            FROM source_health_events
+            ORDER BY created_at DESC
+            LIMIT ?
+            """,
+            conn,
+            params=(limit,),
+        )
+
+
+def add_case(title: str, summary: str, owner: str, severity: str, status: str, campaign_id: int | None) -> None:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            """
+            INSERT INTO cases (title, summary, owner, severity, status, campaign_id)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (title.strip(), summary.strip(), owner.strip(), severity, status, campaign_id),
+        )
+        case_id = int(cursor.lastrowid)
+        if campaign_id:
+            campaign_links = pd.read_sql_query(
+                """
+                SELECT source_table, source_ref, title, url, network, confidence
+                FROM campaign_links
+                WHERE campaign_id = ?
+                """,
+                conn,
+                params=(campaign_id,),
+            )
+            for _, row in campaign_links.iterrows():
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO case_links (case_id, source_table, source_ref, title, url, network, link_type, confidence)
+                    VALUES (?, ?, ?, ?, ?, ?, 'campaign_seed', ?)
+                    """,
+                    (
+                        case_id,
+                        row["source_table"],
+                        row["source_ref"],
+                        row["title"],
+                        row.get("url"),
+                        row.get("network"),
+                        int(row.get("confidence", 50)),
+                    ),
+                )
+        conn.commit()
+
+
+def add_case_note(case_id: int, author: str, note: str) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO case_notes (case_id, author, note)
+            VALUES (?, ?, ?)
+            """,
+            (case_id, author.strip(), note.strip()),
+        )
+        conn.execute(
+            """
+            UPDATE cases
+            SET updated_at = CURRENT_TIMESTAMP, last_activity = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (case_id,),
+        )
+        conn.commit()
+
+
+def load_cases() -> pd.DataFrame:
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT
+                cs.id, cs.title, cs.summary, cs.owner, cs.status, cs.severity,
+                cs.campaign_id, c.name AS campaign_name, cs.last_activity, cs.updated_at,
+                COUNT(cl.id) AS linked_items,
+                COUNT(cn.id) AS notes
+            FROM cases cs
+            LEFT JOIN campaigns c ON c.id = cs.campaign_id
+            LEFT JOIN case_links cl ON cl.case_id = cs.id
+            LEFT JOIN case_notes cn ON cn.case_id = cs.id
+            GROUP BY cs.id, cs.title, cs.summary, cs.owner, cs.status, cs.severity,
+                     cs.campaign_id, c.name, cs.last_activity, cs.updated_at
+            ORDER BY
+                CASE cs.severity
+                    WHEN 'critical' THEN 0
+                    WHEN 'high' THEN 1
+                    WHEN 'medium' THEN 2
+                    ELSE 3
+                END,
+                cs.last_activity DESC
+            """,
+            conn,
+        )
+
+
+def load_case_links(case_id: int | None = None, limit: int = 100) -> pd.DataFrame:
+    with get_connection() as conn:
+        if case_id:
+            return pd.read_sql_query(
+                """
+                SELECT cl.id, cs.title AS case_title, cl.source_table, cl.title, cl.url, cl.network, cl.link_type, cl.confidence, cl.last_seen
+                FROM case_links cl
+                JOIN cases cs ON cs.id = cl.case_id
+                WHERE cl.case_id = ?
+                ORDER BY cl.last_seen DESC
+                LIMIT ?
+                """,
+                conn,
+                params=(case_id, limit),
+            )
+        return pd.read_sql_query(
+            """
+            SELECT cl.id, cs.title AS case_title, cl.source_table, cl.title, cl.url, cl.network, cl.link_type, cl.confidence, cl.last_seen
+            FROM case_links cl
+            JOIN cases cs ON cs.id = cl.case_id
+            ORDER BY cl.last_seen DESC
+            LIMIT ?
+            """,
+            conn,
+            params=(limit,),
+        )
+
+
+def load_case_notes(case_id: int | None = None, limit: int = 100) -> pd.DataFrame:
+    with get_connection() as conn:
+        if case_id:
+            return pd.read_sql_query(
+                """
+                SELECT cn.id, cs.title AS case_title, cn.author, cn.note, cn.created_at
+                FROM case_notes cn
+                JOIN cases cs ON cs.id = cn.case_id
+                WHERE cn.case_id = ?
+                ORDER BY cn.created_at DESC
+                LIMIT ?
+                """,
+                conn,
+                params=(case_id, limit),
+            )
+        return pd.read_sql_query(
+            """
+            SELECT cn.id, cs.title AS case_title, cn.author, cn.note, cn.created_at
+            FROM case_notes cn
+            JOIN cases cs ON cs.id = cn.case_id
+            ORDER BY cn.created_at DESC
             LIMIT ?
             """,
             conn,
@@ -202,48 +385,67 @@ def evaluate_watchlists() -> int:
         created = 0
 
         for _, rule in rules.iterrows():
-            needle = (rule["indicator"] or "").strip().lower()
+            needle = normalize_text(rule["indicator"])
             if not needle:
                 continue
             scope = rule["scope"] or "All Sources"
-            variants = {needle}
-            if rule["fuzzy_match"]:
-                variants.update({
-                    needle.replace(".", "[.]"),
-                    needle.replace("@", " at "),
-                    needle.replace("-", ""),
-                    needle.replace(" ", ""),
-                })
+            fuzzy = bool(rule["fuzzy_match"])
+            indicator_type = rule.get("indicator_type", "keyword")
+            variants = normalized_variants(needle) if fuzzy else {needle}
 
             for _, row in sources.iterrows():
-                haystack = " ".join(str(row.get(col, "")) for col in ["url", "source", "tag"]).lower()
+                haystack = " ".join(str(row.get(col, "")) for col in ["url", "source", "tag"])
                 url = row.get("url")
                 if scope != "All Sources" and classify_scope(url) != scope:
                     continue
-                if any(v and v in haystack for v in variants):
-                    created += _persist_watchlist_match(conn, rule, "onions", str(row["id"]), needle, url, row.get("network"), haystack[:280])
+                entities = extract_entities(haystack)
+                matched = False
+                best_score = 0
+                for variant in variants:
+                    is_match, score = score_match(indicator_type, variant, haystack, entities, fuzzy)
+                    if is_match and score > best_score:
+                        matched = True
+                        best_score = score
+                if matched:
+                    created += _persist_watchlist_match(conn, rule, "onions", str(row["id"]), needle, url, row.get("network"), normalize_text(haystack)[:280], best_score)
 
             for _, row in findings.iterrows():
-                haystack = " ".join(str(row.get(col, "")) for col in ["value", "snippet", "url"]).lower()
+                haystack = " ".join(str(row.get(col, "")) for col in ["value", "snippet", "url"])
                 url = row.get("url")
                 if scope != "All Sources" and classify_scope(url) != scope:
                     continue
-                if any(v and v in haystack for v in variants):
-                    created += _persist_watchlist_match(conn, rule, "data_leaks", str(row["id"]), str(row.get("value", needle)), url, row.get("network"), str(row.get("snippet", ""))[:280])
+                entities = extract_entities(haystack)
+                matched = False
+                best_score = 0
+                for variant in variants:
+                    is_match, score = score_match(indicator_type, variant, haystack, entities, fuzzy)
+                    if is_match and score > best_score:
+                        matched = True
+                        best_score = score
+                if matched:
+                    created += _persist_watchlist_match(conn, rule, "data_leaks", str(row["id"]), str(row.get("value", needle)), url, row.get("network"), normalize_text(str(row.get("snippet", "")))[:280], best_score)
 
             for _, row in zero_day.iterrows():
-                haystack = " ".join(str(row.get(col, "")) for col in ["title", "indicator", "details", "url"]).lower()
+                haystack = " ".join(str(row.get(col, "")) for col in ["title", "indicator", "details", "url"])
                 url = row.get("url")
                 if scope != "All Sources" and classify_scope(url) != scope:
                     continue
-                if any(v and v in haystack for v in variants):
-                    created += _persist_watchlist_match(conn, rule, "zero_day_signals", str(row["id"]), str(row.get("indicator", needle)), url, row.get("network"), str(row.get("details", ""))[:280])
+                entities = extract_entities(haystack)
+                matched = False
+                best_score = 0
+                for variant in variants:
+                    is_match, score = score_match(indicator_type, variant, haystack, entities, fuzzy)
+                    if is_match and score > best_score:
+                        matched = True
+                        best_score = score
+                if matched:
+                    created += _persist_watchlist_match(conn, rule, "zero_day_signals", str(row["id"]), str(row.get("indicator", needle)), url, row.get("network"), normalize_text(str(row.get("details", "")))[:280], best_score)
 
         conn.commit()
         return created
 
 
-def _persist_watchlist_match(conn: sqlite3.Connection, rule: pd.Series, source_table: str, source_ref: str, matched_value: str, url: str, network: str, context: str) -> int:
+def _persist_watchlist_match(conn: sqlite3.Connection, rule: pd.Series, source_table: str, source_ref: str, matched_value: str, url: str, network: str, context: str, match_score: int) -> int:
     cursor = conn.execute(
         """
         INSERT INTO watchlist_hits (watchlist_id, source_table, source_ref, matched_value, url, network, context)
@@ -278,7 +480,7 @@ def _persist_watchlist_match(conn: sqlite3.Connection, rule: pd.Series, source_t
             rule["name"],
             rule["severity"],
             f"Watchlist hit: {rule['name']}",
-            matched_value,
+            f"{matched_value} (match score {match_score})",
             url,
             network or classify_network(url),
         ),
@@ -305,13 +507,20 @@ def evaluate_saved_hunts() -> int:
             if not query:
                 continue
             hit_count = 0
+            seen = set()
 
-            index_results = pd.DataFrame(search(query, limit=20))
+            index_results = pd.DataFrame(search(query, limit=30))
             if not index_results.empty:
                 if hunt["scope"] != "All Sources":
                     index_results = index_results[index_results["url"].fillna("").map(classify_scope) == hunt["scope"]]
+                if not index_results.empty:
+                    index_results = pd.DataFrame(dedupe_records(index_results.to_dict("records"), ["url", "title"]))
                 hit_count += len(index_results.index)
                 for _, row in index_results.head(5).iterrows():
+                    fingerprint = ("search_index", row.get("url"), row.get("title"))
+                    if fingerprint in seen:
+                        continue
+                    seen.add(fingerprint)
                     created += _persist_hunt_alert(conn, hunt, row.get("title") or query, row.get("url"), "search_index")
 
             sources = pd.read_sql_query(
@@ -327,8 +536,15 @@ def evaluate_saved_hunts() -> int:
             if not sources.empty:
                 if hunt["scope"] != "All Sources":
                     sources = sources[sources["url"].fillna("").map(classify_scope) == hunt["scope"]]
+                if not sources.empty:
+                    sources["normalized"] = sources["url"].fillna("").map(normalize_text)
+                    sources = sources.drop_duplicates(subset=["normalized", "tag"])
                 hit_count += len(sources.index)
                 for _, row in sources.head(5).iterrows():
+                    fingerprint = ("source", row.get("url"), row.get("tag"))
+                    if fingerprint in seen:
+                        continue
+                    seen.add(fingerprint)
                     created += _persist_hunt_alert(conn, hunt, f"{row.get('tag', 'source')} source match", row.get("url"), row.get("network"))
 
             signals = pd.read_sql_query(
@@ -344,8 +560,15 @@ def evaluate_saved_hunts() -> int:
             if not signals.empty:
                 if hunt["scope"] != "All Sources":
                     signals = signals[signals["url"].fillna("").map(classify_scope) == hunt["scope"]]
+                if not signals.empty:
+                    signals["normalized_indicator"] = signals["indicator"].fillna("").map(normalize_text)
+                    signals = signals.drop_duplicates(subset=["url", "normalized_indicator"])
                 hit_count += len(signals.index)
                 for _, row in signals.head(5).iterrows():
+                    fingerprint = ("signal", row.get("url"), row.get("indicator"))
+                    if fingerprint in seen:
+                        continue
+                    seen.add(fingerprint)
                     created += _persist_hunt_alert(conn, hunt, row.get("title") or row.get("indicator"), row.get("url"), row.get("network"))
 
             conn.execute(
@@ -481,18 +704,32 @@ def refresh_source_reliability() -> int:
         findings = pd.read_sql_query("SELECT url FROM data_leaks", conn)
         zero_day = pd.read_sql_query("SELECT url, severity FROM zero_day_signals", conn)
         watch_hits = pd.read_sql_query("SELECT url FROM watchlist_hits", conn)
+        overrides = pd.read_sql_query(
+            """
+            SELECT url, health, analyst_override, override_note
+            FROM source_reliability
+            """,
+            conn,
+        )
 
         evidence_counts = findings["url"].value_counts().to_dict() if not findings.empty else {}
         zero_counts = zero_day["url"].value_counts().to_dict() if not zero_day.empty else {}
         hit_counts = watch_hits["url"].value_counts().to_dict() if not watch_hits.empty else {}
+        override_map = overrides.set_index("url").to_dict("index") if not overrides.empty else {}
 
         updates = 0
         for _, row in sources.iterrows():
             url = row.get("url")
-            freshness_days = int(max((pd.Timestamp.utcnow() - pd.to_datetime(row.get("last_seen"), errors="coerce", utc=True)).days, 0)) if pd.notna(pd.to_datetime(row.get("last_seen"), errors="coerce", utc=True)) else 999
+            last_seen = pd.to_datetime(row.get("last_seen"), errors="coerce", utc=True)
+            freshness_days = int(max((pd.Timestamp.utcnow() - last_seen).days, 0)) if pd.notna(last_seen) else 999
             evidence_count = int(evidence_counts.get(url, 0))
             zero_count = int(zero_counts.get(url, 0))
             hit_count = int(hit_counts.get(url, 0))
+            override = override_map.get(url, {})
+            health = override.get("health") or "active"
+            analyst_override = int(override.get("analyst_override") or 0)
+            override_note = override.get("override_note") or ""
+
             base = 20
             score = base
             score += min(evidence_count * 8, 30)
@@ -500,16 +737,31 @@ def refresh_source_reliability() -> int:
             score += min(hit_count * 6, 18)
             score += 10 if row.get("priority") == "priority" else 0
             score += 8 if freshness_days <= 3 else 4 if freshness_days <= 14 else 0
-            confidence = min(45 + evidence_count * 8 + zero_count * 12 + hit_count * 5, 95)
-            rationale = f"evidence={evidence_count}, zero_day={zero_count}, watchlist={hit_count}, freshness_days={freshness_days}"
+            decay_penalty = max(min((freshness_days - 7) // 7, 8), 0) * 3 if freshness_days > 7 else 0
+
+            health_modifier = {
+                "active": 6,
+                "monitored": 0,
+                "stale": -8,
+                "degraded": -14,
+                "blocked": -20,
+            }.get(health, 0)
+
+            score = score + health_modifier + analyst_override - decay_penalty
+            confidence = min(max(45 + evidence_count * 8 + zero_count * 12 + hit_count * 5 + analyst_override - decay_penalty, 20), 95)
+            rationale = (
+                f"evidence={evidence_count}, zero_day={zero_count}, watchlist={hit_count}, "
+                f"freshness_days={freshness_days}, health={health}, decay_penalty={decay_penalty}, override={analyst_override}"
+            )
 
             conn.execute(
                 """
                 INSERT INTO source_reliability (
                     url, network, source, tag, score, confidence, evidence_count,
-                    zero_day_count, watchlist_hit_count, freshness_days, rationale
+                    zero_day_count, watchlist_hit_count, freshness_days, health,
+                    analyst_override, decay_penalty, rationale, override_note
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(url) DO UPDATE SET
                     network=excluded.network,
                     source=excluded.source,
@@ -520,7 +772,11 @@ def refresh_source_reliability() -> int:
                     zero_day_count=excluded.zero_day_count,
                     watchlist_hit_count=excluded.watchlist_hit_count,
                     freshness_days=excluded.freshness_days,
+                    health=excluded.health,
+                    analyst_override=excluded.analyst_override,
+                    decay_penalty=excluded.decay_penalty,
                     rationale=excluded.rationale,
+                    override_note=excluded.override_note,
                     updated_at=CURRENT_TIMESTAMP
                 """,
                 (
@@ -534,7 +790,11 @@ def refresh_source_reliability() -> int:
                     zero_count,
                     hit_count,
                     freshness_days,
+                    health,
+                    analyst_override,
+                    decay_penalty,
                     rationale,
+                    override_note,
                 ),
             )
             updates += 1
