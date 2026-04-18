@@ -136,8 +136,9 @@ def load_overview_data():
     findings = pd.DataFrame(columns=["url", "leak_type", "value", "snippet", "network", "timestamp"])
     frontier = pd.DataFrame(columns=["status", "count"])
     zero_day = pd.DataFrame(columns=["title", "signal_type", "indicator", "severity", "confidence", "url", "network", "last_seen"])
+    snapshots = pd.DataFrame(columns=["url", "snapshot_file", "network", "collected_at"])
     if not DB_PATH.exists():
-        return sources, findings, frontier, zero_day
+        return sources, findings, frontier, zero_day, snapshots
     with get_connection() as conn:
         if table_exists(conn, "onions"):
             cols = table_columns(conn, "onions")
@@ -151,7 +152,12 @@ def load_overview_data():
             frontier = pd.read_sql_query("SELECT status, COUNT(*) AS count FROM frontier GROUP BY status ORDER BY status", conn)
         if table_exists(conn, "zero_day_signals"):
             zero_day = pd.read_sql_query("SELECT title, signal_type, indicator, severity, confidence, url, network, last_seen FROM zero_day_signals ORDER BY last_seen DESC", conn)
-    return sources, findings, frontier, zero_day
+        if table_exists(conn, "snapshots"):
+            snapshots = pd.read_sql_query(
+                "SELECT url, snapshot_file, network, collected_at FROM snapshots ORDER BY collected_at DESC",
+                conn,
+            )
+    return sources, findings, frontier, zero_day, snapshots
 
 
 def search_evidence(term: str):
@@ -183,9 +189,9 @@ def search_evidence(term: str):
     return pd.concat(records, ignore_index=True) if records else pd.DataFrame(columns=["type", "url", "summary", "timestamp"])
 
 
-def build_threat_map(sources: pd.DataFrame, findings: pd.DataFrame, zero_day: pd.DataFrame):
+def build_threat_map(snapshots: pd.DataFrame, findings: pd.DataFrame, zero_day: pd.DataFrame):
     events = []
-    for frame, weight_col in [(sources, None), (findings, None), (zero_day, "severity")]:
+    for frame, weight_col in [(snapshots, None), (findings, None), (zero_day, "severity")]:
         if frame.empty:
             continue
         for row in frame.fillna("").to_dict("records"):
@@ -291,7 +297,7 @@ st.markdown(
 if "crawl_depth" not in st.session_state:
     st.session_state.crawl_depth = 4
 
-sources_df, findings_df, frontier_df, zero_day_df = load_overview_data()
+sources_df, findings_df, frontier_df, zero_day_df, snapshots_df = load_overview_data()
 scope = st.sidebar.radio("Visibility", ["Dark Web", "Clear Net", "All Sources"], index=0)
 lens = st.sidebar.selectbox("Lens", ["Threat Intel", "Zero-Day Watch", "Exposure Monitoring"])
 st.sidebar.caption("Built for analyst-led threat research and authorized exposure monitoring.")
@@ -349,6 +355,7 @@ if st.sidebar.button("Harvest Target", width="stretch"):
 scoped_sources = apply_scope_filter(sources_df, scope)
 scoped_findings = apply_scope_filter(findings_df, scope)
 scoped_zero_day = apply_scope_filter(zero_day_df, scope)
+scoped_snapshots = apply_scope_filter(snapshots_df, scope)
 watchlists_df = load_watchlists()
 saved_hunts_df = load_saved_hunts()
 saved_views_df = load_saved_views()
@@ -372,12 +379,16 @@ selected_case_id = next(iter(case_selector_options.values()), None)
 selected_case_summary = build_case_summary(selected_case_id) if selected_case_id else {}
 
 latest_seen = "No telemetry"
-if not scoped_sources.empty:
+if not scoped_snapshots.empty:
+    valid_seen = pd.to_datetime(scoped_snapshots["collected_at"], errors="coerce").dropna()
+    if not valid_seen.empty:
+        latest_seen = valid_seen.max().strftime("%Y-%m-%d %H:%M UTC")
+elif not scoped_sources.empty:
     valid_seen = pd.to_datetime(scoped_sources["last_seen"], errors="coerce").dropna()
     if not valid_seen.empty:
         latest_seen = valid_seen.max().strftime("%Y-%m-%d %H:%M UTC")
 
-map_points, map_clusters = build_threat_map(scoped_sources, scoped_findings, scoped_zero_day)
+map_points, map_clusters = build_threat_map(scoped_snapshots, scoped_findings, scoped_zero_day)
 velocity = build_velocity(scoped_findings, scoped_zero_day)
 priority_queue = build_priority_queue(scoped_findings, scoped_zero_day)
 critical_zero_day = int((scoped_zero_day["severity"].fillna("").str.lower() == "critical").sum()) if not scoped_zero_day.empty else 0

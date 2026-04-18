@@ -16,23 +16,27 @@
 - Source scope toggle for `Dark Web`, `Clear Net`, or `All Sources`
 - Coverage views that separate fetch-ready networks from catalog-only networks
 - PDF export for analyst reporting
+- Dockerized deployment path for a dashboard container, collector container, and Tor sidecar
 ---
 
-### 🧪 Install
+### 🧪 Local Install
 
 ```bash
 git clone https://github.com/yourhandle/ghostcrawler.git
 cd ghostcrawler
 pip install -r requirements.txt
 ```
-Requires: tor, python3, streamlit, requests_tor, whoosh
+Requires: tor, python3, streamlit, PySocks, whoosh
 
 ---
 
-### 🚀 Run a Scan
+### 🚀 Run Collection Locally
 
 ```bash
-python cli/run_scan.py
+python -m core.aggregate_feeds
+python -m core.crawler
+python -m core.frontier_crawl
+python -m core.search_engine
 ```
 
 ---
@@ -54,6 +58,52 @@ The dashboard now includes:
 - Multi-network source coverage for darknet ecosystems beyond Tor
 
 ---
+
+### 🐳 Docker And VPS Launch
+
+The production deployment uses:
+
+- `dashboard`: Streamlit UI
+- `collector`: scheduled background ingestion, indexing, and analyst refresh
+- `tor`: SOCKS proxy sidecar for Tor collection
+
+Copy the example env if you want to override defaults:
+
+```bash
+cp .env.example .env
+```
+
+Launch the stack:
+
+```bash
+docker compose up -d --build
+```
+
+Open the dashboard on:
+
+```text
+http://YOUR_VPS_IP:8501
+```
+
+Data is stored in the Docker volume `ghostcrawler_data`, so the DB, snapshots, index, and reports survive container restarts.
+
+The production compose file disables demo content by default:
+
+- `GHOSTCRAWLER_ENABLE_DEMO_CONTENT=false`
+- seed catalog bootstrap stays on so the collector has initial sources
+
+Useful ops commands:
+
+```bash
+docker compose logs -f collector
+docker compose logs -f dashboard
+docker compose logs -f tor
+docker compose restart collector
+```
+
+If you want to put this behind Nginx or Caddy on your VPS, reverse proxy port `8501` and restrict public access with auth before exposing it more broadly.
+
+---
 ### 📂 Watchlist Format
 
 ```json
@@ -72,6 +122,8 @@ supports: comma seperated emails, keywords, and dowmains
 This toolkit is for defensive security, authorized intelligence collection, and exposure monitoring only. Do not use it to access illegal content, retain data you are not authorized to store, or perform unauthorized collection against third-party systems.
 
 The multi-darknet catalog is intentionally connector-aware: Tor and clear-net HTTP collection work today, while Freenet, Gnunet, Riffle, ZeroNet, Lokinet, and similar ecosystems are tracked in the schema and dashboard so dedicated transport adapters can be added without rewriting the app.
+
+For production deployments, the dashboard should be treated as an analyst console over collected telemetry, not as a promise that every listed darknet transport already has a live collector.
 
 
 ---

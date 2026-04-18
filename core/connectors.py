@@ -9,8 +9,10 @@ from bs4 import BeautifulSoup
 
 try:
     from core.network_catalog import NETWORKS, classify_network
+    from core.utils import tor_socks_url
 except ImportError:
     from network_catalog import NETWORKS, classify_network
+    from utils import tor_socks_url
 
 
 @dataclass
@@ -83,8 +85,8 @@ def build_tor_session() -> requests.Session:
     session.trust_env = False
     session.proxies.update(
         {
-            "http": "socks5h://127.0.0.1:9050",
-            "https": "socks5h://127.0.0.1:9050",
+            "http": tor_socks_url(),
+            "https": tor_socks_url(),
         }
     )
     return session

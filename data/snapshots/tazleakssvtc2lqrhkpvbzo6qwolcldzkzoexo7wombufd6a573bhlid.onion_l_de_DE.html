@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="de-DE" dir="ltr">
+
+<head>
+  <title>Willkommen | taz, die tageszeitung | SecureDrop</title>
+
+  <link rel="stylesheet" href="/static/css/source.css">
+  <link rel="icon" type="image/png" href="/static/i/favicon.png">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex,nofollow">
+
+  <!-- nosemgrep: generic.html-templates.security.unquoted-attribute-var.unquoted-attribute-var -->
+  <script src="/static/js/source.js"></script>
+</head>
+
+<body id="source-index">
+  <div id="browser-security-level" class="warning" role="alert">
+    <p>Die <a id="disable-js" href=""><b>Sicherheitsstufe</b></a> Ihres Tor-Browsers ist zu niedrig. Nutzen Sie die Schaltfläche <img src="/static/i/font-awesome/white/guard.svg" alt="&quot;Sicherheitsstufe&quot;"> in der Werkzeugleiste Ihres Browsers, um sie zu ändern.</p>
+  </div>
+  <dialog open id="security-level-info" aria-labelledby="security-level-heading"
+    aria-describedby="security-level-instructions">
+    <h2 id="security-level-heading" hidden>Wie Sie Ihre Sicherheitsstufe ändern</h2>
+    <ol id="security-level-instructions">
+      <li>
+        Klicken Sie auf <img src="/static/i/font-awesome/black/guard.svg" alt="Schaltfläche &quot;Sicherheitsstufe&quot;"> in der Werkzeugleiste oben
+      </li>
+      <li>Klicken Sie <b>Einstellungen</b>, um die Sicherheitsstufe zu konfigurieren</li>
+      <li>Klicken Sie <b>Ändern…</b> und wählen Sie <b>Am sichersten</b></li>
+      <li>Klicken Sie <b>Speichern und neustarten.</b></li>
+    </ol>
+    <p>
+    Tor Browser wird mit der Sicherheitsstufe <b>Am sichersten</b> neu starten. Besuchen Sie danach diese Webseite erneut.
+    </p>
+  </dialog>
+  <div id="browser-tb" class="warning" role="alert">
+    <p><strong>Es wird empfohlen, für den Zugriff auf SecureDrop den Tor-Browser zu verwenden:</strong> <a class="recommend-tor" href="/use-tor">Erfahren Sie, wie Sie ihn installieren</a> oder ignorieren Sie diese Warnung, um fortzufahren.
+    <span id="browser-tb-close" aria-label="Schließen">×</span></p>
+  </div>
+  <div id="browser-android" class="warning" role="alert">
+    <p><strong>Es wird empfohlen, für den Zugriff auf SecureDrop die Desktop-Version des Tor Browsers zu verwenden, da der Tor Browser für Android nicht das gleiche Maß an Sicherheit und Anonymität bietet wie die Desktop-Version.</strong> <a class="recommend-tor" aria-label="Learn how to install Tor Browser" href="/use-tor">Erfahre, wie es installiert wird</a>, oder ignoriere diese Warnung, um fortzufahren.
+    <span id="browser-android-close" aria-label="Schließen">×</span></p>
+  </div>
+
+  <div class="content">
+    <header>
+      <h1><img src="/static/i/custom_logo.png" alt="taz, die tageszeitung Logo"></h1>
+<section id="locales-menu" aria-labelledby="locales-menu-heading">
+  <h2 id="locales-menu-heading" hidden>
+    Ausgewählte Sprache: Deutsch
+  </h2>
+  <input id="locales-menu-checkbox" type="checkbox" role="button"
+    aria-label="Sprache auswählen" aria-haspopup="menu" aria-controls="locales-menu-list" aria-pressed="true">
+  <label for="locales-menu-checkbox" aria-hidden="true">
+    Deutsch
+  </label>
+
+  <ul id="locales-menu-list" role="menu" aria-labelledby="locales-menu-checkbox">
+    <li role="none">
+      <!-- nosemgrep: generic.html-templates.security.var-in-href.var-in-href -->
+      <a href="" rel="nofollow" lang="de-DE" hreflang="de-DE"
+        role="menuitemradio" aria-checked="true">
+        Deutsch
+      </a>
+    </li>
+    <li role="none">
+      <!-- nosemgrep: generic.html-templates.security.var-in-href.var-in-href -->
+      <a href="/?l=en_US" rel="nofollow" lang="en-US" hreflang="en-US"
+        role="menuitemradio" aria-checked="false">
+        English
+      </a>
+    </li>
+  </ul>
+</section>
+    </header>
+
+    <main>
+      <section id="first-submission" aria-labelledby="first-submission-heading">
+        <h2 id="first-submission-heading">Erste Einreichung</h2>
+        <p>Erstmalige Einreichung bei unserem SecureDrop? Beginnen Sie hier.</p>
+        <form id="started-form" method="post" action="/generate" autocomplete="off">
+          <input name="csrf_token" type="hidden" value="IjViNTYxZTZkMzc4OTk5YzdjNzk4OTkwYjEyZmY3OThkMDBlOWI1YjIi.aeLtkA.Jf1LbEOI5d_7huOTMst0nBb5Sio">
+          <input name="tor2web_check" type="hidden" value='href="fake.onion"'>
+          <button type="submit" aria-label="Beginne mit deiner ersten Einreichung">
+            ERSTE SCHRITTE
+          </button>
+        </form>
+      </section>
+
+      <section id="return-visit" aria-labelledby="return-visit-heading">
+          <h2 id="return-visit-heading">Wiederholungsbesuch</h2>
+          <p>Haben Sie bereits einen Decknamen? Schauen Sie nach Antworten oder reichen Sie etwas Neues ein.</p>
+          <a href="/login" class="btn secondary"
+            aria-label="Anmelden mit Deinem Decknamen">
+            ANMELDEN
+          </a>
+      </section>
+    </main>
+  </div>
+<footer>
+  <p id="footer-powered-by">
+    Ermöglicht durch <b>SecureDrop 2.15.0</b>.
+  </p>
+  <p id="footer-advisory">
+    Achtung: Das Teilen von vertraulichen Informationen kann Sie in Gefahr bringen, auch wenn Sie Tor und SecureDrop verwenden.
+  </p>
+  <p id="footer-fpf">
+    SecureDrop ist ein Projekt der Freedom of the Press Foundation.
+  </p>
+</footer>
+
+</body>
+
+</html>

@@ -208,6 +208,18 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
                 except sqlite3.Error as exc:
                     logging.error("DB error saving leak for %s: %s", url, exc)
 
+            conn.execute(
+                """
+                INSERT INTO snapshots (url, snapshot_file, network, collected_at)
+                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                ON CONFLICT(url) DO UPDATE SET
+                    snapshot_file=excluded.snapshot_file,
+                    network=excluded.network,
+                    collected_at=CURRENT_TIMESTAMP
+                """,
+                (url, filename, network),
+            )
+
             found_links = []
             for full_url in fetched.links or []:
                 full_url = normalize_crawl_url(full_url)

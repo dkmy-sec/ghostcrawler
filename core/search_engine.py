@@ -1,6 +1,8 @@
 from datetime import datetime, timezone
 from pathlib import Path
 
+import sqlite3
+
 from bs4 import BeautifulSoup
 from whoosh import index
 from whoosh.fields import DATETIME, ID, TEXT, Schema
@@ -8,6 +10,7 @@ from whoosh.index import exists_in, open_dir
 from whoosh.qparser import MultifieldParser
 
 from core.utils import DATA_DIR
+from core.intel_schema import DB_PATH
 
 INDEX_DIR = DATA_DIR / "index"
 SNAPSHOT_DIR = DATA_DIR / "snapshots"
@@ -33,9 +36,14 @@ def _open_or_create_index():
 
 
 def _snapshot_url(html_file: Path) -> str:
-    name = html_file.name
-    if name.endswith(".html"):
-        name = name[:-5]
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            row = conn.execute("SELECT url FROM snapshots WHERE snapshot_file = ?", (html_file.name,)).fetchone()
+            if row and row[0]:
+                return row[0]
+    except sqlite3.Error:
+        pass
+    name = html_file.name[:-5] if html_file.name.endswith(".html") else html_file.name
     return name.replace("_", "/")
 
 

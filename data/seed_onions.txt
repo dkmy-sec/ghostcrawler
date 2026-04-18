@@ -2453,3 +2453,7 @@ http://psycelau33ij2rnysdau6ifz3pch5ygajwz356ed56uyrr3n72gqlzid.onion
 http://asap4u5rgthozlv6riqr5liyoeo72h2pckae5n56fp5nzoei2ibi22yd.onion
 http://4pt4axt3wawp452hslszdwu7lvxw6r4g5alf3qndtjfaicnk5c6sn2ad.onion
 http://alphabaygvozyvz6z2mfjr3wcrbr3cvyrwsdm7ro5e4lp6ryhkhwduid.onion
+freenet:USK@darknet-threat-feed/index/1
+gnunet://threat-exchange/forums/zero-day
+riffle://intel/market-watch
+http://hiddenwiki.i2p

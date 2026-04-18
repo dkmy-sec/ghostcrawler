@@ -4,7 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from core.network_catalog import classify_network
-from core.utils import DATA_DIR
+from core.utils import DATA_DIR, ENABLE_DEMO_CONTENT, ENABLE_SEED_CATALOG
 
 
 DB_PATH = DATA_DIR / "onion_sources.db"
@@ -176,6 +176,20 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             ON zero_day_signals(url, signal_type, indicator)
             """
         )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url TEXT NOT NULL UNIQUE,
+                snapshot_file TEXT NOT NULL,
+                network TEXT DEFAULT 'unknown',
+                collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        _ensure_column(conn, "snapshots", "network", "TEXT DEFAULT 'unknown'")
+        _ensure_column(conn, "snapshots", "collected_at", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
 
         conn.execute(
             """
@@ -432,7 +446,9 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             """
         )
 
-        _seed_multi_network_sources(conn)
-        _seed_zero_day_signals(conn)
+        if ENABLE_SEED_CATALOG:
+            _seed_multi_network_sources(conn)
+        if ENABLE_DEMO_CONTENT:
+            _seed_zero_day_signals(conn)
         conn.commit()
     return db_path

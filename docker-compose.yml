@@ -1,0 +1,58 @@
+services:
+  tor:
+    build:
+      context: .
+      dockerfile: docker/tor/Dockerfile
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "sh", "-c", "nc -z 127.0.0.1 9050"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  collector:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      tor:
+        condition: service_started
+    environment:
+      GHOSTCRAWLER_ENV: production
+      GHOSTCRAWLER_DATA_DIR: /app/data
+      GHOSTCRAWLER_TOR_SOCKS_HOST: tor
+      GHOSTCRAWLER_TOR_SOCKS_PORT: 9050
+      GHOSTCRAWLER_ENABLE_DEMO_CONTENT: "false"
+      GHOSTCRAWLER_ENABLE_SEED_CATALOG: "true"
+      GHOSTCRAWLER_ENABLE_FRONTIER: "true"
+      GHOSTCRAWLER_COLLECTOR_INTERVAL_SECONDS: 900
+      GHOSTCRAWLER_SEED_BATCH_LIMIT: 12
+      GHOSTCRAWLER_SEED_BATCH_DEPTH: 3
+    volumes:
+      - ghostcrawler_data:/app/data
+    command: ["python", "-m", "core.collector_service"]
+
+  dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      collector:
+        condition: service_started
+    environment:
+      GHOSTCRAWLER_ENV: production
+      GHOSTCRAWLER_DATA_DIR: /app/data
+      GHOSTCRAWLER_TOR_SOCKS_HOST: tor
+      GHOSTCRAWLER_TOR_SOCKS_PORT: 9050
+      GHOSTCRAWLER_ENABLE_DEMO_CONTENT: "false"
+      GHOSTCRAWLER_ENABLE_SEED_CATALOG: "true"
+    ports:
+      - "8501:8501"
+    volumes:
+      - ghostcrawler_data:/app/data
+    command: ["streamlit", "run", "cli/dashboard.py", "--server.address=0.0.0.0", "--server.port=8501"]
+
+volumes:
+  ghostcrawler_data:
