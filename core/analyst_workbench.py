@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 
 import pandas as pd
@@ -60,6 +61,39 @@ def load_saved_hunts() -> pd.DataFrame:
             SELECT id, name, query, description, scope, severity, enabled, hit_count, last_run, last_hit_at, created_at
             FROM saved_hunts
             ORDER BY enabled DESC, created_at DESC
+            """,
+            conn,
+        )
+
+
+def add_saved_view(name: str, scope: str, lens: str, tab_name: str, query: str, filters: dict, created_by: str) -> None:
+    filters_json = json.dumps(filters or {}, ensure_ascii=True, sort_keys=True)
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO saved_views (name, scope, lens, tab_name, query, filters_json, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(name) DO UPDATE SET
+                scope=excluded.scope,
+                lens=excluded.lens,
+                tab_name=excluded.tab_name,
+                query=excluded.query,
+                filters_json=excluded.filters_json,
+                created_by=excluded.created_by,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (name.strip(), scope, lens, tab_name, query.strip(), filters_json, created_by.strip()),
+        )
+        conn.commit()
+
+
+def load_saved_views() -> pd.DataFrame:
+    with get_connection() as conn:
+        return pd.read_sql_query(
+            """
+            SELECT id, name, scope, lens, tab_name, query, filters_json, created_by, updated_at, created_at
+            FROM saved_views
+            ORDER BY updated_at DESC, created_at DESC
             """,
             conn,
         )
@@ -282,6 +316,45 @@ def add_case_note(case_id: int, author: str, note: str) -> None:
         conn.commit()
 
 
+def add_case_handoff(
+    case_id: int,
+    from_owner: str,
+    to_owner: str,
+    summary: str,
+    next_steps: str,
+    due_at: str,
+    status: str,
+) -> None:
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO case_handoffs (case_id, from_owner, to_owner, summary, next_steps, due_at, status)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                case_id,
+                from_owner.strip(),
+                to_owner.strip(),
+                summary.strip(),
+                next_steps.strip(),
+                due_at.strip(),
+                status,
+            ),
+        )
+        conn.execute(
+            """
+            UPDATE cases
+            SET owner = COALESCE(NULLIF(?, ''), owner),
+                status = CASE WHEN ? = 'completed' THEN status ELSE 'handoff' END,
+                updated_at = CURRENT_TIMESTAMP,
+                last_activity = CURRENT_TIMESTAMP
+            WHERE id = ?
+            """,
+            (to_owner.strip(), status, case_id),
+        )
+        conn.commit()
+
+
 def load_cases() -> pd.DataFrame:
     with get_connection() as conn:
         return pd.read_sql_query(
@@ -338,6 +411,36 @@ def load_case_links(case_id: int | None = None, limit: int = 100) -> pd.DataFram
         )
 
 
+def load_case_handoffs(case_id: int | None = None, limit: int = 100) -> pd.DataFrame:
+    with get_connection() as conn:
+        if case_id:
+            return pd.read_sql_query(
+                """
+                SELECT ch.id, cs.title AS case_title, ch.from_owner, ch.to_owner, ch.summary,
+                       ch.next_steps, ch.due_at, ch.status, ch.created_at
+                FROM case_handoffs ch
+                JOIN cases cs ON cs.id = ch.case_id
+                WHERE ch.case_id = ?
+                ORDER BY ch.created_at DESC
+                LIMIT ?
+                """,
+                conn,
+                params=(case_id, limit),
+            )
+        return pd.read_sql_query(
+            """
+            SELECT ch.id, cs.title AS case_title, ch.from_owner, ch.to_owner, ch.summary,
+                   ch.next_steps, ch.due_at, ch.status, ch.created_at
+            FROM case_handoffs ch
+            JOIN cases cs ON cs.id = ch.case_id
+            ORDER BY ch.created_at DESC
+            LIMIT ?
+            """,
+            conn,
+            params=(limit,),
+        )
+
+
 def load_case_notes(case_id: int | None = None, limit: int = 100) -> pd.DataFrame:
     with get_connection() as conn:
         if case_id:
@@ -364,6 +467,136 @@ def load_case_notes(case_id: int | None = None, limit: int = 100) -> pd.DataFram
             conn,
             params=(limit,),
         )
+
+
+def build_case_summary(case_id: int) -> dict:
+    with get_connection() as conn:
+        case_row = conn.execute(
+            """
+            SELECT cs.id, cs.title, cs.summary, cs.owner, cs.status, cs.severity,
+                   cs.created_at, cs.updated_at, cs.last_activity, c.name AS campaign_name
+            FROM cases cs
+            LEFT JOIN campaigns c ON c.id = cs.campaign_id
+            WHERE cs.id = ?
+            """,
+            (case_id,),
+        ).fetchone()
+        if not case_row:
+            return {}
+
+        links = pd.read_sql_query(
+            """
+            SELECT source_table, title, url, network, link_type, confidence, last_seen
+            FROM case_links
+            WHERE case_id = ?
+            ORDER BY confidence DESC, last_seen DESC
+            LIMIT 10
+            """,
+            conn,
+            params=(case_id,),
+        )
+        notes = pd.read_sql_query(
+            """
+            SELECT author, note, created_at
+            FROM case_notes
+            WHERE case_id = ?
+            ORDER BY created_at DESC
+            LIMIT 8
+            """,
+            conn,
+            params=(case_id,),
+        )
+        handoffs = pd.read_sql_query(
+            """
+            SELECT from_owner, to_owner, summary, next_steps, due_at, status, created_at
+            FROM case_handoffs
+            WHERE case_id = ?
+            ORDER BY created_at DESC
+            LIMIT 5
+            """,
+            conn,
+            params=(case_id,),
+        )
+
+    link_records = links.to_dict(orient="records")
+    note_records = notes.to_dict(orient="records")
+    handoff_records = handoffs.to_dict(orient="records")
+    top_entities: list[str] = []
+    for record in link_records[:5]:
+        label = str(record.get("title") or record.get("url") or "").strip()
+        if label and label not in top_entities:
+            top_entities.append(label)
+
+    return {
+        "case": {
+            "id": case_row[0],
+            "title": case_row[1],
+            "summary": case_row[2] or "",
+            "owner": case_row[3] or "",
+            "status": case_row[4] or "",
+            "severity": case_row[5] or "",
+            "created_at": case_row[6] or "",
+            "updated_at": case_row[7] or "",
+            "last_activity": case_row[8] or "",
+            "campaign_name": case_row[9] or "",
+        },
+        "linked_items": len(link_records),
+        "note_count": len(note_records),
+        "handoff_count": len(handoff_records),
+        "top_entities": top_entities,
+        "recent_links": link_records,
+        "recent_notes": note_records,
+        "recent_handoffs": handoff_records,
+    }
+
+
+def export_case_summary_markdown(case_id: int) -> str:
+    summary = build_case_summary(case_id)
+    if not summary:
+        return ""
+
+    case = summary["case"]
+    lines = [
+        f"# {case['title']}",
+        "",
+        f"- Severity: {case['severity']}",
+        f"- Status: {case['status']}",
+        f"- Owner: {case['owner'] or 'unassigned'}",
+        f"- Campaign: {case['campaign_name'] or 'none'}",
+        f"- Linked Items: {summary['linked_items']}",
+        f"- Notes: {summary['note_count']}",
+        f"- Handoffs: {summary['handoff_count']}",
+        f"- Last Activity: {case['last_activity']}",
+        "",
+        "## Summary",
+        case["summary"] or "No analyst summary entered yet.",
+        "",
+    ]
+    if summary["top_entities"]:
+        lines.extend(["## Priority Leads", *[f"- {item}" for item in summary["top_entities"]], ""])
+    if summary["recent_notes"]:
+        lines.append("## Recent Notes")
+        for note in summary["recent_notes"][:5]:
+            author = note.get("author") or "unknown"
+            created_at = note.get("created_at") or ""
+            lines.append(f"- [{created_at}] {author}: {note.get('note') or ''}")
+        lines.append("")
+    if summary["recent_handoffs"]:
+        lines.append("## Handoffs")
+        for handoff in summary["recent_handoffs"][:3]:
+            lines.append(
+                f"- [{handoff.get('created_at')}] {handoff.get('from_owner') or 'unassigned'} -> "
+                f"{handoff.get('to_owner') or 'unassigned'} ({handoff.get('status')}): {handoff.get('summary') or ''}"
+            )
+        lines.append("")
+    if summary["recent_links"]:
+        lines.append("## Linked Evidence")
+        for link in summary["recent_links"][:8]:
+            lines.append(
+                f"- [{link.get('source_table')}] {link.get('title') or link.get('url') or 'untitled'} | "
+                f"{link.get('network') or 'unknown'} | confidence {link.get('confidence')}"
+            )
+    return "\n".join(lines).strip() + "\n"
 
 
 def evaluate_watchlists() -> int:

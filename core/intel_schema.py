@@ -390,6 +390,40 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             """
         )
 
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS saved_views (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                scope TEXT DEFAULT 'All Sources',
+                lens TEXT DEFAULT 'Threat Intel',
+                tab_name TEXT DEFAULT 'Command Deck',
+                query TEXT,
+                filters_json TEXT,
+                created_by TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS case_handoffs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                case_id INTEGER NOT NULL,
+                from_owner TEXT,
+                to_owner TEXT,
+                summary TEXT NOT NULL,
+                next_steps TEXT,
+                due_at TEXT,
+                status TEXT DEFAULT 'queued',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (case_id) REFERENCES cases(id)
+            )
+            """
+        )
+
         _seed_multi_network_sources(conn)
         _seed_zero_day_signals(conn)
         conn.commit()

@@ -20,17 +20,23 @@ from core.connectors import connector_status_frame, supports_fetch
 from core.crawler import crawl_onion
 from core.analyst_workbench import (
     add_case,
+    add_case_handoff,
     add_campaign,
     add_case_note,
     add_saved_hunt,
+    add_saved_view,
     add_watchlist,
+    build_case_summary,
+    export_case_summary_markdown,
     load_analyst_alerts,
     load_campaign_links,
     load_campaigns,
+    load_case_handoffs,
     load_case_links,
     load_case_notes,
     load_cases,
     load_saved_hunts,
+    load_saved_views,
     load_source_health_events,
     load_source_reliability,
     load_watchlist_hits,
@@ -257,6 +263,14 @@ def generate_pdf_report():
     pdf.output(str(PDF_REPORT))
 
 
+def export_frame_csv(frame: pd.DataFrame) -> bytes:
+    return frame.to_csv(index=False).encode("utf-8")
+
+
+def export_json_bytes(payload: dict) -> bytes:
+    return json.dumps(payload, indent=2, ensure_ascii=True).encode("utf-8")
+
+
 st.set_page_config(page_title="Ghostcrawler Command Deck", page_icon="GC", layout="wide", initial_sidebar_state="expanded")
 st.markdown(
     """
@@ -282,6 +296,29 @@ sources_df, findings_df, frontier_df, zero_day_df = load_overview_data()
 scope = st.sidebar.radio("Visibility", ["Dark Web", "Clear Net", "All Sources"], index=0)
 lens = st.sidebar.selectbox("Lens", ["Threat Intel", "Zero-Day Watch", "Exposure Monitoring"])
 st.sidebar.caption("Built for analyst-led threat research and authorized exposure monitoring.")
+
+with st.sidebar.expander("Saved Views", expanded=False):
+    with st.form("saved_view_form", clear_on_submit=True):
+        saved_view_name = st.text_input("View name", placeholder="High-signal ransomware watch")
+        saved_view_tab = st.selectbox("Default tab", ["Command Deck", "Hunt Workbench", "Watchlists & Hunts", "Cases", "Evidence Locker", "Collection Lab"])
+        saved_view_query = st.text_input("Pinned query", placeholder="Optional hunt term or actor alias")
+        saved_view_owner = st.text_input("Owner", placeholder="Analyst name or team")
+        save_view_submit = st.form_submit_button("Save Current View", use_container_width=True)
+    if save_view_submit:
+        if saved_view_name.strip():
+            add_saved_view(
+                saved_view_name,
+                scope,
+                lens,
+                saved_view_tab,
+                saved_view_query,
+                {"scope": scope, "lens": lens, "default_tab": saved_view_tab, "seed_network": seed_network if "seed_network" in locals() else ""},
+                saved_view_owner,
+            )
+            st.sidebar.success("Saved view updated.")
+            st.rerun()
+        else:
+            st.sidebar.warning("View name is required.")
 
 if st.sidebar.button("Refresh Source Catalog", use_container_width=True):
     run_python(APP_ROOT / "core" / "aggregate_feeds.py")
@@ -315,6 +352,7 @@ scoped_findings = apply_scope_filter(findings_df, scope)
 scoped_zero_day = apply_scope_filter(zero_day_df, scope)
 watchlists_df = load_watchlists()
 saved_hunts_df = load_saved_hunts()
+saved_views_df = load_saved_views()
 watchlist_hits_df = load_watchlist_hits()
 analyst_alerts_df = load_analyst_alerts()
 campaigns_df = load_campaigns()
@@ -324,7 +362,15 @@ source_health_events_df = load_source_health_events()
 cases_df = load_cases()
 case_links_df = load_case_links()
 case_notes_df = load_case_notes()
+case_handoffs_df = load_case_handoffs()
 connector_status_df = pd.DataFrame(connector_status_frame())
+
+case_selector_options = {}
+if not cases_df.empty:
+    for _, row in cases_df.iterrows():
+        case_selector_options[f"{row['title']} [{row['status']}]"] = int(row["id"])
+selected_case_id = next(iter(case_selector_options.values()), None)
+selected_case_summary = build_case_summary(selected_case_id) if selected_case_id else {}
 
 latest_seen = "No telemetry"
 if not scoped_sources.empty:
@@ -396,6 +442,11 @@ with command_tab:
             st.info("No rule-driven alerts yet.")
         else:
             st.dataframe(analyst_alerts_df.head(8), use_container_width=True, hide_index=True)
+        st.markdown('<div class="panel"><div class="label">Saved Views</div><div class="foot">Reusable analyst layouts pinned to a scope, lens, and default workspace tab.</div></div>', unsafe_allow_html=True)
+        if saved_views_df.empty:
+            st.info("No saved views yet. Use the sidebar to pin your current working posture.")
+        else:
+            st.dataframe(saved_views_df.head(8), use_container_width=True, hide_index=True)
         st.markdown('<div class="panel"><div class="label">Source Reliability</div><div class="foot">Ranked sources based on freshness, evidence yield, day-zero relevance, and watchlist hits.</div></div>', unsafe_allow_html=True)
         if source_reliability_df.empty:
             st.info("No reliability scores yet. Refresh analyst signals to compute them.")
@@ -578,13 +629,14 @@ with rules_tab:
 
 with cases_tab:
     st.subheader("Case Desk")
-    st.caption("Turn campaigns, alerts, and linked evidence into operational investigations with ownership, status, and notes.")
+    st.caption("Turn campaigns, alerts, and linked evidence into operational investigations with ownership, summaries, exports, notes, and analyst handoffs.")
 
-    case_left, case_right = st.columns(2)
     campaign_options = {"No campaign": None}
     if not campaigns_df.empty:
         for _, row in campaigns_df.iterrows():
             campaign_options[f"{row['name']} ({row['linked_records']} linked)"] = int(row["id"])
+
+    case_left, case_right = st.columns((0.95, 1.05))
 
     with case_left:
         st.markdown("#### Open Case")
@@ -617,40 +669,107 @@ with cases_tab:
         else:
             st.dataframe(cases_df, use_container_width=True, hide_index=True)
 
-    with case_right:
         st.markdown("#### Add Case Note")
-        case_note_options = {}
-        if not cases_df.empty:
-            for _, row in cases_df.iterrows():
-                case_note_options[f"{row['title']} [{row['status']}]"] = int(row["id"])
-
-        if not case_note_options:
+        if not case_selector_options:
             st.info("Create a case first, then add notes.")
         else:
             with st.form("case_note_form", clear_on_submit=True):
-                selected_case_label = st.selectbox("Case", list(case_note_options.keys()))
+                selected_case_label = st.selectbox("Case", list(case_selector_options.keys()))
                 note_author = st.text_input("Author", placeholder="Analyst name")
                 note_text = st.text_area("Note", placeholder="Assessment, pivot path, next steps, or evidence summary.")
                 note_submit = st.form_submit_button("Add Note", use_container_width=True)
             if note_submit:
                 if note_text.strip():
-                    add_case_note(case_note_options[selected_case_label], note_author, note_text)
+                    add_case_note(case_selector_options[selected_case_label], note_author, note_text)
                     st.success("Case note added.")
                     st.rerun()
                 else:
                     st.warning("Note text is required.")
 
-        st.markdown("#### Case Links")
-        if case_links_df.empty:
-            st.info("No case links yet. Cases seeded from campaigns will inherit linked records.")
+    with case_right:
+        st.markdown("#### Case Summary And Handoff")
+        if not case_selector_options:
+            st.info("Create a case to unlock summaries, exports, and handoffs.")
         else:
-            st.dataframe(case_links_df, use_container_width=True, hide_index=True)
+            active_case_label = st.selectbox("Working case", list(case_selector_options.keys()), key="active_case_selector")
+            active_case_id = case_selector_options[active_case_label]
+            active_case_summary = build_case_summary(active_case_id)
+            active_case_links = load_case_links(active_case_id)
+            active_case_notes = load_case_notes(active_case_id)
+            active_case_handoffs = load_case_handoffs(active_case_id)
+            case_export_md = export_case_summary_markdown(active_case_id)
 
-        st.markdown("#### Case Notes")
-        if case_notes_df.empty:
-            st.info("No case notes yet.")
-        else:
-            st.dataframe(case_notes_df, use_container_width=True, hide_index=True)
+            if active_case_summary:
+                meta = active_case_summary["case"]
+                st.markdown(
+                    f"""
+                    <div class="panel">
+                        <div class="label">Case Brief</div>
+                        <div class="foot"><strong>{meta['title']}</strong> | {meta['severity'].upper()} | {meta['status']} | owner: {meta['owner'] or 'unassigned'}</div>
+                        <div class="foot" style="margin-top:.7rem;">{meta['summary'] or 'No analyst summary entered yet.'}</div>
+                        <div class="foot" style="margin-top:.7rem;">Campaign: {meta['campaign_name'] or 'none'} | Linked items: {active_case_summary['linked_items']} | Notes: {active_case_summary['note_count']} | Handoffs: {active_case_summary['handoff_count']}</div>
+                    </div>
+                    """,
+                    unsafe_allow_html=True,
+                )
+                if active_case_summary["top_entities"]:
+                    st.caption("Priority leads: " + " | ".join(active_case_summary["top_entities"]))
+
+                export_left, export_right = st.columns(2)
+                with export_left:
+                    st.download_button(
+                        "Download case brief (.md)",
+                        case_export_md.encode("utf-8"),
+                        file_name=f"ghostcrawler_case_{active_case_id}_brief.md",
+                        use_container_width=True,
+                    )
+                with export_right:
+                    st.download_button(
+                        "Download case packet (.json)",
+                        export_json_bytes(active_case_summary),
+                        file_name=f"ghostcrawler_case_{active_case_id}_packet.json",
+                        use_container_width=True,
+                    )
+
+            with st.form("case_handoff_form", clear_on_submit=True):
+                handoff_from = st.text_input("From owner", value=(active_case_summary.get("case", {}).get("owner") or ""))
+                handoff_to = st.text_input("To owner", placeholder="Incoming analyst or team")
+                handoff_status = st.selectbox("Handoff status", ["queued", "in_progress", "completed"], index=0)
+                handoff_due = st.text_input("Due by", placeholder="2026-04-18 09:00 ET")
+                handoff_summary = st.text_area("Handoff summary", placeholder="What changed, what matters, and what needs review first.")
+                handoff_next_steps = st.text_area("Next steps", placeholder="Validate actor overlap, pivot on domains, confirm exploit references, export report.")
+                handoff_submit = st.form_submit_button("Create Handoff", use_container_width=True)
+            if handoff_submit:
+                if handoff_summary.strip():
+                    add_case_handoff(active_case_id, handoff_from, handoff_to, handoff_summary, handoff_next_steps, handoff_due, handoff_status)
+                    st.success("Case handoff logged.")
+                    st.rerun()
+                else:
+                    st.warning("Handoff summary is required.")
+
+            st.markdown("#### Case Links")
+            if active_case_links.empty:
+                st.info("No case links yet. Cases seeded from campaigns will inherit linked records.")
+            else:
+                st.dataframe(active_case_links, use_container_width=True, hide_index=True)
+                st.download_button(
+                    "Export case links CSV",
+                    export_frame_csv(active_case_links),
+                    file_name=f"ghostcrawler_case_{active_case_id}_links.csv",
+                    use_container_width=True,
+                )
+
+            st.markdown("#### Case Notes")
+            if active_case_notes.empty:
+                st.info("No case notes yet.")
+            else:
+                st.dataframe(active_case_notes, use_container_width=True, hide_index=True)
+
+            st.markdown("#### Analyst Handoffs")
+            if active_case_handoffs.empty:
+                st.info("No handoffs recorded for this case yet.")
+            else:
+                st.dataframe(active_case_handoffs, use_container_width=True, hide_index=True)
 
 with evidence_tab:
     left, right = st.columns(2)
@@ -675,6 +794,7 @@ with evidence_tab:
         alerts_df = apply_scope_filter(pd.DataFrame(json.loads(ALERTS_PATH.read_text(encoding="utf-8"))), scope)
         if not alerts_df.empty:
             st.dataframe(alerts_df, use_container_width=True, hide_index=True)
+            st.download_button("Export alert feed CSV", export_frame_csv(alerts_df), file_name="ghostcrawler_alert_feed.csv", use_container_width=True)
         else:
             st.info("No alerts in this scope.")
     else:
@@ -686,11 +806,13 @@ with evidence_tab:
             st.info("No campaign context yet.")
         else:
             st.dataframe(campaigns_df.head(10), use_container_width=True, hide_index=True)
+            st.download_button("Export campaigns CSV", export_frame_csv(campaigns_df), file_name="ghostcrawler_campaigns.csv", use_container_width=True)
     with context_right:
         if source_reliability_df.empty:
             st.info("No reliability context yet.")
         else:
             st.dataframe(source_reliability_df.head(10), use_container_width=True, hide_index=True)
+            st.download_button("Export reliability CSV", export_frame_csv(source_reliability_df), file_name="ghostcrawler_source_reliability.csv", use_container_width=True)
     if PDF_REPORT.exists():
         st.download_button("Download threat intel PDF", PDF_REPORT.read_bytes(), file_name="ghostcrawler_threat_report.pdf", use_container_width=True)
 
