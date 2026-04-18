@@ -1,9 +1,19 @@
 import sqlite3
+import sys
+from pathlib import Path
 
-from core.crawler import classify_onion
-from core.intel_schema import DB_PATH, MULTI_NETWORK_SEEDS, ensure_database
-from core.network_catalog import classify_network, network_label
-from core.utils import DATA_DIR
+sys.path.append(str(Path(__file__).resolve().parent.parent))
+
+try:
+    from core.crawler import classify_onion
+    from core.intel_schema import DB_PATH, MULTI_NETWORK_SEEDS, ensure_database
+    from core.network_catalog import classify_network, network_label
+    from core.utils import DATA_DIR
+except ImportError:
+    from crawler import classify_onion
+    from intel_schema import DB_PATH, MULTI_NETWORK_SEEDS, ensure_database
+    from network_catalog import classify_network, network_label
+    from utils import DATA_DIR
 
 
 SEED_TXT = DATA_DIR / "seed_onions.txt"

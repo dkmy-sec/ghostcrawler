@@ -1,5 +1,5 @@
 requests
-requests_tor
+PySocks
 beautifulsoup4~=4.13.4
 streamlit~=1.45.1
 whoosh~=2.7.4

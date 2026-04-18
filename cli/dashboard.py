@@ -12,11 +12,10 @@ import requests
 import streamlit as st
 from bs4 import BeautifulSoup
 from fpdf import FPDF
-from requests_tor import RequestsTor
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from core.connectors import connector_status_frame, supports_fetch
+from core.connectors import build_tor_session, connector_status_frame, supports_fetch
 from core.crawler import crawl_onion
 from core.analyst_workbench import (
     add_case,
@@ -69,7 +68,7 @@ ensure_database(DB_PATH)
 
 
 def get_tor_session():
-    return RequestsTor(tor_ports=(9050,), autochange_id=False)
+    return build_tor_session()
 
 
 session_tor = get_tor_session()
@@ -303,7 +302,7 @@ with st.sidebar.expander("Saved Views", expanded=False):
         saved_view_tab = st.selectbox("Default tab", ["Command Deck", "Hunt Workbench", "Watchlists & Hunts", "Cases", "Evidence Locker", "Collection Lab"])
         saved_view_query = st.text_input("Pinned query", placeholder="Optional hunt term or actor alias")
         saved_view_owner = st.text_input("Owner", placeholder="Analyst name or team")
-        save_view_submit = st.form_submit_button("Save Current View", use_container_width=True)
+        save_view_submit = st.form_submit_button("Save Current View", width="stretch")
     if save_view_submit:
         if saved_view_name.strip():
             add_saved_view(
@@ -320,17 +319,17 @@ with st.sidebar.expander("Saved Views", expanded=False):
         else:
             st.sidebar.warning("View name is required.")
 
-if st.sidebar.button("Refresh Source Catalog", use_container_width=True):
+if st.sidebar.button("Refresh Source Catalog", width="stretch"):
     run_python(APP_ROOT / "core" / "aggregate_feeds.py")
-if st.sidebar.button("Run Seed Batch", use_container_width=True):
+if st.sidebar.button("Run Seed Batch", width="stretch"):
     run_python(APP_ROOT / "core" / "crawler.py")
-if st.sidebar.button("Run Frontier Crawl", use_container_width=True):
+if st.sidebar.button("Run Frontier Crawl", width="stretch"):
     run_python(APP_ROOT / "core" / "frontier_crawl.py")
-if st.sidebar.button("Build Search Index", use_container_width=True):
+if st.sidebar.button("Build Search Index", width="stretch"):
     build_index()
-if st.sidebar.button("Generate Intel Report", use_container_width=True):
+if st.sidebar.button("Generate Intel Report", width="stretch"):
     generate_pdf_report()
-if st.sidebar.button("Refresh Analyst Signals", use_container_width=True):
+if st.sidebar.button("Refresh Analyst Signals", width="stretch"):
     refresh_stats = refresh_analyst_signals()
     st.sidebar.success(
         f"Rules refreshed: {refresh_stats['watchlist_matches']} watchlist, {refresh_stats['hunt_matches']} hunt, {refresh_stats['campaign_links']} campaign, {refresh_stats['reliability_updates']} reliability update(s)."
@@ -339,7 +338,7 @@ if st.sidebar.button("Refresh Analyst Signals", use_container_width=True):
 seed_url = st.sidebar.text_input("Target URL", value="http://vfnmxpa6fo4jdpyq3yneqhglluweax2uclvxkytfpmpkp5rsl75ir5qd.onion")
 seed_network = classify_network(seed_url)
 st.sidebar.caption(f"Detected network: {network_label(seed_network)}")
-if st.sidebar.button("Harvest Target", use_container_width=True):
+if st.sidebar.button("Harvest Target", width="stretch"):
     if not supports_fetch(seed_url):
         st.sidebar.warning(f"{network_label(seed_network)} needs a dedicated connector before live collection can run.")
     elif seed_network == "tor":
@@ -424,46 +423,46 @@ with command_tab:
         if map_points.empty:
             st.info("No mapped telemetry is available yet.")
         else:
-            st.map(map_points[["latitude", "longitude"]], zoom=1, use_container_width=True)
-            st.dataframe(map_clusters[["cluster", "network", "pressure"]], use_container_width=True, hide_index=True)
+            st.map(map_points[["latitude", "longitude"]], zoom=1, width="stretch")
+            st.dataframe(map_clusters[["cluster", "network", "pressure"]], width="stretch", hide_index=True)
         st.markdown('<div class="panel"><div class="label">Signal Velocity</div><div class="foot">Daily throughput across evidence and day-zero detections.</div></div>', unsafe_allow_html=True)
         if velocity.empty:
             st.info("Signal velocity will appear once timestamps accumulate.")
         else:
-            st.line_chart(velocity.set_index("date"), use_container_width=True, height=260)
+            st.line_chart(velocity.set_index("date"), width="stretch", height=260)
     with right:
         st.markdown('<div class="panel"><div class="label">Priority Queue</div><div class="foot">High-signal items that deserve immediate analyst attention.</div></div>', unsafe_allow_html=True)
         if priority_queue.empty:
             st.info("No priority queue items yet.")
         else:
-            st.dataframe(priority_queue, use_container_width=True, hide_index=True)
+            st.dataframe(priority_queue, width="stretch", hide_index=True)
         st.markdown('<div class="panel"><div class="label">Rule Driven Alerts</div><div class="foot">Open analyst alerts generated from watchlists and saved hunts.</div></div>', unsafe_allow_html=True)
         if analyst_alerts_df.empty:
             st.info("No rule-driven alerts yet.")
         else:
-            st.dataframe(analyst_alerts_df.head(8), use_container_width=True, hide_index=True)
+            st.dataframe(analyst_alerts_df.head(8), width="stretch", hide_index=True)
         st.markdown('<div class="panel"><div class="label">Saved Views</div><div class="foot">Reusable analyst layouts pinned to a scope, lens, and default workspace tab.</div></div>', unsafe_allow_html=True)
         if saved_views_df.empty:
             st.info("No saved views yet. Use the sidebar to pin your current working posture.")
         else:
-            st.dataframe(saved_views_df.head(8), use_container_width=True, hide_index=True)
+            st.dataframe(saved_views_df.head(8), width="stretch", hide_index=True)
         st.markdown('<div class="panel"><div class="label">Source Reliability</div><div class="foot">Ranked sources based on freshness, evidence yield, day-zero relevance, and watchlist hits.</div></div>', unsafe_allow_html=True)
         if source_reliability_df.empty:
             st.info("No reliability scores yet. Refresh analyst signals to compute them.")
         else:
-            st.dataframe(source_reliability_df.head(8), use_container_width=True, hide_index=True)
+            st.dataframe(source_reliability_df.head(8), width="stretch", hide_index=True)
             st.caption("Scores now include decay for aging sources plus analyst override and health-state adjustments.")
         st.markdown('<div class="panel"><div class="label">Connector Readiness</div><div class="foot">Plugin-style collector adapters by network, showing what is ready now versus partially scaffolded.</div></div>', unsafe_allow_html=True)
         if connector_status_df.empty:
             st.info("No connector metadata loaded.")
         else:
-            st.dataframe(connector_status_df, use_container_width=True, hide_index=True)
+            st.dataframe(connector_status_df, width="stretch", hide_index=True)
         coverage = scoped_sources.copy()
         if not coverage.empty:
             coverage["network_name"] = coverage["network"].fillna(coverage["url"].map(classify_network)).map(network_label)
             coverage_matrix = coverage.groupby(["network_name", "tag"]).size().reset_index(name="count").sort_values(["network_name", "count"], ascending=[True, False])
             st.markdown('<div class="panel"><div class="label">Network Coverage</div><div class="foot">Where collection is concentrated today.</div></div>', unsafe_allow_html=True)
-            st.dataframe(coverage_matrix.head(16), use_container_width=True, hide_index=True)
+            st.dataframe(coverage_matrix.head(16), width="stretch", hide_index=True)
 
 with hunt_tab:
     st.caption("Search pivots now normalize common IOC/entity formats and suppress obvious duplicate matches before they become analyst noise.")
@@ -475,13 +474,13 @@ with hunt_tab:
         with left:
             st.markdown("#### Indexed Snapshot Matches")
             if not index_results.empty:
-                st.dataframe(index_results, use_container_width=True, hide_index=True)
+                st.dataframe(index_results, width="stretch", hide_index=True)
             else:
                 st.info("No indexed matches.")
         with right:
             st.markdown("#### Evidence and Signal Matches")
             if not evidence_results.empty:
-                st.dataframe(evidence_results, use_container_width=True, hide_index=True)
+                st.dataframe(evidence_results, width="stretch", hide_index=True)
             else:
                 st.info("No evidence or signal matches.")
     else:
@@ -502,7 +501,7 @@ with rules_tab:
             wl_scope = st.selectbox("Scope", ["All Sources", "Dark Web", "Clear Net"], index=0)
             wl_tags = st.text_input("Tags", placeholder="vip, ransomware, identity")
             wl_fuzzy = st.checkbox("Enable fuzzy matching", value=True)
-            wl_submit = st.form_submit_button("Save Watchlist", use_container_width=True)
+            wl_submit = st.form_submit_button("Save Watchlist", width="stretch")
         if wl_submit:
             if wl_name.strip() and wl_indicator.strip():
                 add_watchlist(wl_name, wl_indicator, wl_type, wl_severity, wl_tags, wl_scope, wl_fuzzy)
@@ -519,7 +518,7 @@ with rules_tab:
             hunt_description = st.text_area("Description", placeholder="Track broker chatter around enterprise remote access.")
             hunt_scope = st.selectbox("Hunt scope", ["All Sources", "Dark Web", "Clear Net"], index=0)
             hunt_severity = st.selectbox("Hunt severity", ["critical", "high", "medium", "low"], index=1)
-            hunt_submit = st.form_submit_button("Save Hunt", use_container_width=True)
+            hunt_submit = st.form_submit_button("Save Hunt", width="stretch")
         if hunt_submit:
             if hunt_name.strip() and hunt_query.strip():
                 add_saved_hunt(hunt_name, hunt_query, hunt_description, hunt_scope, hunt_severity)
@@ -539,7 +538,7 @@ with rules_tab:
             campaign_severity = st.selectbox("Campaign severity", ["critical", "high", "medium", "low"], index=1)
             campaign_tags = st.text_input("Campaign tags", placeholder="vpn, broker, extortion")
             campaign_description = st.text_area("Description", placeholder="Cluster evidence, signals, and sources under a shared research narrative.")
-        campaign_submit = st.form_submit_button("Save Campaign", use_container_width=True)
+        campaign_submit = st.form_submit_button("Save Campaign", width="stretch")
     if campaign_submit:
         if campaign_name.strip():
             add_campaign(campaign_name, campaign_description, campaign_actor, campaign_type, campaign_severity, campaign_tags)
@@ -568,19 +567,19 @@ with rules_tab:
         if watchlists_df.empty:
             st.info("No watchlists created yet.")
         else:
-            st.dataframe(watchlists_df, use_container_width=True, hide_index=True)
+            st.dataframe(watchlists_df, width="stretch", hide_index=True)
 
         st.markdown("#### Recent Watchlist Hits")
         if watchlist_hits_df.empty:
             st.info("No watchlist hits yet. Refresh analyst signals after adding rules.")
         else:
-            st.dataframe(watchlist_hits_df, use_container_width=True, hide_index=True)
+            st.dataframe(watchlist_hits_df, width="stretch", hide_index=True)
 
         st.markdown("#### Source Reliability Rankings")
         if source_reliability_df.empty:
             st.info("No source reliability scores yet.")
         else:
-            st.dataframe(source_reliability_df, use_container_width=True, hide_index=True)
+            st.dataframe(source_reliability_df, width="stretch", hide_index=True)
             override_options = source_reliability_df["url"].dropna().tolist()
             if override_options:
                 st.markdown("#### Reliability Override")
@@ -590,7 +589,7 @@ with rules_tab:
                     override_score = st.slider("Analyst override", min_value=-30, max_value=30, value=0, help="Positive values raise trust. Negative values suppress noisy or untrusted sources.")
                     override_author = st.text_input("Author", placeholder="Analyst name")
                     override_note = st.text_area("Override note", placeholder="Why the source is trusted, noisy, stale, degraded, or blocked.")
-                    override_submit = st.form_submit_button("Apply Override", use_container_width=True)
+                    override_submit = st.form_submit_button("Apply Override", width="stretch")
                 if override_submit:
                     update_source_override(override_url, override_health, override_score, override_note, override_author)
                     st.success("Source override saved.")
@@ -601,31 +600,31 @@ with rules_tab:
         if saved_hunts_df.empty:
             st.info("No saved hunts created yet.")
         else:
-            st.dataframe(saved_hunts_df, use_container_width=True, hide_index=True)
+            st.dataframe(saved_hunts_df, width="stretch", hide_index=True)
 
         st.markdown("#### Analyst Alerts")
         if analyst_alerts_df.empty:
             st.info("No analyst alerts yet.")
         else:
-            st.dataframe(analyst_alerts_df, use_container_width=True, hide_index=True)
+            st.dataframe(analyst_alerts_df, width="stretch", hide_index=True)
 
         st.markdown("#### Campaigns")
         if campaigns_df.empty:
             st.info("No campaigns created yet.")
         else:
-            st.dataframe(campaigns_df, use_container_width=True, hide_index=True)
+            st.dataframe(campaigns_df, width="stretch", hide_index=True)
 
         st.markdown("#### Campaign Links")
         if campaign_links_df.empty:
             st.info("No campaign links yet. Refresh analyst signals after adding campaigns.")
         else:
-            st.dataframe(campaign_links_df, use_container_width=True, hide_index=True)
+            st.dataframe(campaign_links_df, width="stretch", hide_index=True)
 
         st.markdown("#### Source Health Events")
         if source_health_events_df.empty:
             st.info("No source health events yet.")
         else:
-            st.dataframe(source_health_events_df, use_container_width=True, hide_index=True)
+            st.dataframe(source_health_events_df, width="stretch", hide_index=True)
 
 with cases_tab:
     st.subheader("Case Desk")
@@ -647,7 +646,7 @@ with cases_tab:
             case_severity = st.selectbox("Case severity", ["critical", "high", "medium", "low"], index=1)
             case_status = st.selectbox("Case status", ["open", "triage", "monitoring", "contained", "closed"], index=0)
             selected_campaign_label = st.selectbox("Seed from campaign", list(campaign_options.keys()), index=0)
-            case_submit = st.form_submit_button("Create Case", use_container_width=True)
+            case_submit = st.form_submit_button("Create Case", width="stretch")
         if case_submit:
             if case_title.strip():
                 add_case(
@@ -667,7 +666,7 @@ with cases_tab:
         if cases_df.empty:
             st.info("No cases yet.")
         else:
-            st.dataframe(cases_df, use_container_width=True, hide_index=True)
+            st.dataframe(cases_df, width="stretch", hide_index=True)
 
         st.markdown("#### Add Case Note")
         if not case_selector_options:
@@ -677,7 +676,7 @@ with cases_tab:
                 selected_case_label = st.selectbox("Case", list(case_selector_options.keys()))
                 note_author = st.text_input("Author", placeholder="Analyst name")
                 note_text = st.text_area("Note", placeholder="Assessment, pivot path, next steps, or evidence summary.")
-                note_submit = st.form_submit_button("Add Note", use_container_width=True)
+                note_submit = st.form_submit_button("Add Note", width="stretch")
             if note_submit:
                 if note_text.strip():
                     add_case_note(case_selector_options[selected_case_label], note_author, note_text)
@@ -721,14 +720,14 @@ with cases_tab:
                         "Download case brief (.md)",
                         case_export_md.encode("utf-8"),
                         file_name=f"ghostcrawler_case_{active_case_id}_brief.md",
-                        use_container_width=True,
+                        width="stretch",
                     )
                 with export_right:
                     st.download_button(
                         "Download case packet (.json)",
                         export_json_bytes(active_case_summary),
                         file_name=f"ghostcrawler_case_{active_case_id}_packet.json",
-                        use_container_width=True,
+                        width="stretch",
                     )
 
             with st.form("case_handoff_form", clear_on_submit=True):
@@ -738,7 +737,7 @@ with cases_tab:
                 handoff_due = st.text_input("Due by", placeholder="2026-04-18 09:00 ET")
                 handoff_summary = st.text_area("Handoff summary", placeholder="What changed, what matters, and what needs review first.")
                 handoff_next_steps = st.text_area("Next steps", placeholder="Validate actor overlap, pivot on domains, confirm exploit references, export report.")
-                handoff_submit = st.form_submit_button("Create Handoff", use_container_width=True)
+                handoff_submit = st.form_submit_button("Create Handoff", width="stretch")
             if handoff_submit:
                 if handoff_summary.strip():
                     add_case_handoff(active_case_id, handoff_from, handoff_to, handoff_summary, handoff_next_steps, handoff_due, handoff_status)
@@ -751,25 +750,25 @@ with cases_tab:
             if active_case_links.empty:
                 st.info("No case links yet. Cases seeded from campaigns will inherit linked records.")
             else:
-                st.dataframe(active_case_links, use_container_width=True, hide_index=True)
+                st.dataframe(active_case_links, width="stretch", hide_index=True)
                 st.download_button(
                     "Export case links CSV",
                     export_frame_csv(active_case_links),
                     file_name=f"ghostcrawler_case_{active_case_id}_links.csv",
-                    use_container_width=True,
+                    width="stretch",
                 )
 
             st.markdown("#### Case Notes")
             if active_case_notes.empty:
                 st.info("No case notes yet.")
             else:
-                st.dataframe(active_case_notes, use_container_width=True, hide_index=True)
+                st.dataframe(active_case_notes, width="stretch", hide_index=True)
 
             st.markdown("#### Analyst Handoffs")
             if active_case_handoffs.empty:
                 st.info("No handoffs recorded for this case yet.")
             else:
-                st.dataframe(active_case_handoffs, use_container_width=True, hide_index=True)
+                st.dataframe(active_case_handoffs, width="stretch", hide_index=True)
 
 with evidence_tab:
     left, right = st.columns(2)
@@ -778,8 +777,8 @@ with evidence_tab:
         if scoped_findings.empty:
             st.info("No evidence records are available yet.")
         else:
-            st.dataframe(scoped_findings, use_container_width=True, hide_index=True)
-            st.download_button("Export evidence CSV", scoped_findings.to_csv(index=False), file_name="ghostcrawler_evidence.csv", use_container_width=True)
+            st.dataframe(scoped_findings, width="stretch", hide_index=True)
+            st.download_button("Export evidence CSV", scoped_findings.to_csv(index=False), file_name="ghostcrawler_evidence.csv", width="stretch")
     with right:
         st.markdown("#### Day-Zero Intelligence")
         if scoped_zero_day.empty:
@@ -787,14 +786,14 @@ with evidence_tab:
         else:
             zero_day_view = scoped_zero_day.copy()
             zero_day_view["network"] = zero_day_view["network"].fillna("unknown").map(network_label)
-            st.dataframe(zero_day_view, use_container_width=True, hide_index=True)
-            st.download_button("Export zero-day CSV", zero_day_view.to_csv(index=False), file_name="ghostcrawler_zero_day_signals.csv", use_container_width=True)
+            st.dataframe(zero_day_view, width="stretch", hide_index=True)
+            st.download_button("Export zero-day CSV", zero_day_view.to_csv(index=False), file_name="ghostcrawler_zero_day_signals.csv", width="stretch")
     st.markdown("#### Alert Feed")
     if ALERTS_PATH.exists():
         alerts_df = apply_scope_filter(pd.DataFrame(json.loads(ALERTS_PATH.read_text(encoding="utf-8"))), scope)
         if not alerts_df.empty:
-            st.dataframe(alerts_df, use_container_width=True, hide_index=True)
-            st.download_button("Export alert feed CSV", export_frame_csv(alerts_df), file_name="ghostcrawler_alert_feed.csv", use_container_width=True)
+            st.dataframe(alerts_df, width="stretch", hide_index=True)
+            st.download_button("Export alert feed CSV", export_frame_csv(alerts_df), file_name="ghostcrawler_alert_feed.csv", width="stretch")
         else:
             st.info("No alerts in this scope.")
     else:
@@ -805,16 +804,16 @@ with evidence_tab:
         if campaigns_df.empty:
             st.info("No campaign context yet.")
         else:
-            st.dataframe(campaigns_df.head(10), use_container_width=True, hide_index=True)
-            st.download_button("Export campaigns CSV", export_frame_csv(campaigns_df), file_name="ghostcrawler_campaigns.csv", use_container_width=True)
+            st.dataframe(campaigns_df.head(10), width="stretch", hide_index=True)
+            st.download_button("Export campaigns CSV", export_frame_csv(campaigns_df), file_name="ghostcrawler_campaigns.csv", width="stretch")
     with context_right:
         if source_reliability_df.empty:
             st.info("No reliability context yet.")
         else:
-            st.dataframe(source_reliability_df.head(10), use_container_width=True, hide_index=True)
-            st.download_button("Export reliability CSV", export_frame_csv(source_reliability_df), file_name="ghostcrawler_source_reliability.csv", use_container_width=True)
+            st.dataframe(source_reliability_df.head(10), width="stretch", hide_index=True)
+            st.download_button("Export reliability CSV", export_frame_csv(source_reliability_df), file_name="ghostcrawler_source_reliability.csv", width="stretch")
     if PDF_REPORT.exists():
-        st.download_button("Download threat intel PDF", PDF_REPORT.read_bytes(), file_name="ghostcrawler_threat_report.pdf", use_container_width=True)
+        st.download_button("Download threat intel PDF", PDF_REPORT.read_bytes(), file_name="ghostcrawler_threat_report.pdf", width="stretch")
 
 with ops_tab:
     ops_left, ops_right = st.columns(2)
@@ -822,12 +821,12 @@ with ops_tab:
         st.session_state.crawl_depth = st.slider("Deep Hunt Depth", min_value=1, max_value=8, value=st.session_state.crawl_depth, help="2-3 for recon, 4-6 for forums, 7-8 for deliberate archive sweeps.")
         available_urls = scoped_sources["url"].dropna().unique().tolist() if not scoped_sources.empty else []
         selected_urls = st.multiselect(f"Priority Targets ({len(available_urls)} available)", options=available_urls)
-        if st.button("Run Deep Targeted Crawl", use_container_width=True):
+        if st.button("Run Deep Targeted Crawl", width="stretch"):
             if not selected_urls:
                 st.warning("Select at least one target to crawl.")
             else:
                 results = run_selected_crawls(selected_urls, st.session_state.crawl_depth)
-                st.dataframe(pd.DataFrame(results), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(results), width="stretch", hide_index=True)
     with ops_right:
         st.markdown("#### Crawl Profiles")
         st.dataframe(
@@ -838,7 +837,7 @@ with ops_tab:
                     {"profile": "Archive Sweep", "depth": "7-8", "best_for": "Large directories and old mirrors"},
                 ]
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
         st.info("The UI is now oriented around signal density and analyst workflow, which is the right direction if you want this to feel premium later.")

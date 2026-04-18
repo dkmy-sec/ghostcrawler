@@ -6,9 +6,11 @@ from urllib.parse import urljoin
 
 import requests
 from bs4 import BeautifulSoup
-from requests_tor import RequestsTor
 
-from core.network_catalog import NETWORKS, classify_network
+try:
+    from core.network_catalog import NETWORKS, classify_network
+except ImportError:
+    from network_catalog import NETWORKS, classify_network
 
 
 @dataclass
@@ -76,18 +78,30 @@ class HttpConnector(BaseConnector):
         return links
 
 
+def build_tor_session() -> requests.Session:
+    session = requests.Session()
+    session.trust_env = False
+    session.proxies.update(
+        {
+            "http": "socks5h://127.0.0.1:9050",
+            "https": "socks5h://127.0.0.1:9050",
+        }
+    )
+    return session
+
+
 class TorConnector(HttpConnector):
     network = "tor"
     name = "tor_http"
     readiness = "ready"
 
     def __init__(self):
-        super().__init__(session_factory=lambda: RequestsTor(tor_ports=(9050,), autochange_id=False))
+        super().__init__(session_factory=build_tor_session)
 
     def fetch(self, url: str) -> FetchResult:
         session = self.session_factory()
-        if hasattr(session, "reset_identity"):
-            session.reset_identity()
+        if url.lower().startswith("https://") and ".onion" in url.lower():
+            url = "http://" + url.split("://", 1)[1]
         response = session.get(url, headers={"User-Agent": "Ghostcrawler/1.0"}, timeout=20)
         html = response.text
         soup = BeautifulSoup(html, "html.parser")

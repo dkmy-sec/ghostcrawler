@@ -3,7 +3,11 @@ from __future__ import annotations
 import logging
 import re
 import sqlite3
+import sys
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
+
+sys.path.append(str(Path(__file__).resolve().parent.parent))
 
 try:
     from core.connectors import get_connector_for_url, supports_fetch
@@ -33,6 +37,25 @@ ZERO_DAY_PATTERNS = {
 
 def get_connection():
     return sqlite3.connect(DB_PATH)
+
+
+def normalize_crawl_url(url: str) -> str:
+    cleaned = (url or "").strip()
+    if not cleaned:
+        return cleaned
+    if cleaned.lower().startswith("https://") and ".onion" in cleaned.lower():
+        cleaned = "http://" + cleaned.split("://", 1)[1]
+    parts = urlsplit(cleaned)
+    normalized_path = parts.path or "/"
+    if normalized_path != "/" and normalized_path.endswith("/"):
+        normalized_path = normalized_path.rstrip("/")
+    return urlunsplit((parts.scheme, parts.netloc.lower(), normalized_path, parts.query, ""))
+
+
+def snapshot_filename(url: str) -> str:
+    normalized = normalize_crawl_url(url).replace("http://", "").replace("https://", "")
+    safe = re.sub(r"[^A-Za-z0-9._-]+", "_", normalized).strip("._")
+    return (safe or "snapshot")[:180] + ".html"
 
 
 def classify_onion(url: str) -> str:
@@ -137,6 +160,7 @@ def persist_zero_day_signals(signals: list[dict]) -> None:
 
 
 def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
+    url = normalize_crawl_url(url)
     network = classify_network(url)
     if not supports_fetch(url):
         return {
@@ -164,7 +188,7 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
 
         snapshot_dir = DATA_DIR / "snapshots"
         snapshot_dir.mkdir(parents=True, exist_ok=True)
-        filename = f"{url.replace('http://', '').replace('https://', '').replace('/', '_')}.html"
+        filename = snapshot_filename(url)
         (snapshot_dir / filename).write_text(html, encoding="utf-8", errors="ignore")
 
         text = fetched.text or ""
@@ -186,8 +210,12 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
 
             found_links = []
             for full_url in fetched.links or []:
+                full_url = normalize_crawl_url(full_url)
+                if not full_url:
+                    continue
                 child_network = classify_network(full_url)
-                found_links.append(full_url)
+                if full_url not in found_links:
+                    found_links.append(full_url)
                 conn.execute(
                     """
                     INSERT OR IGNORE INTO onions (url, source, tag, depth, quarantined, network, collector)

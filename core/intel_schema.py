@@ -128,6 +128,8 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             )
             """
         )
+        _ensure_column(conn, "data_leaks", "network", "TEXT DEFAULT 'unknown'")
+        _ensure_column(conn, "data_leaks", "timestamp", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
 
         conn.execute(
             """
@@ -143,6 +145,8 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             )
             """
         )
+        _ensure_column(conn, "frontier", "network", "TEXT DEFAULT 'unknown'")
+        _ensure_column(conn, "frontier", "last_try", "TIMESTAMP")
 
         conn.execute(
             """
@@ -162,6 +166,10 @@ def ensure_database(db_path: Path = DB_PATH) -> Path:
             )
             """
         )
+        _ensure_column(conn, "zero_day_signals", "network", "TEXT DEFAULT 'unknown'")
+        _ensure_column(conn, "zero_day_signals", "first_seen", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        _ensure_column(conn, "zero_day_signals", "last_seen", "TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        _ensure_column(conn, "zero_day_signals", "details", "TEXT")
         conn.execute(
             """
             CREATE UNIQUE INDEX IF NOT EXISTS idx_zero_day_unique
