@@ -5,8 +5,8 @@ from urllib.parse import urlparse
 
 NETWORKS = {
     "tor": {"label": "Tor", "scope": "Dark Web", "collector": "tor_http", "supports_fetch": True},
-    "i2p": {"label": "I2P", "scope": "Dark Web", "collector": "i2p_http", "supports_fetch": False},
-    "freenet": {"label": "Freenet", "scope": "Dark Web", "collector": "freenet_native", "supports_fetch": False},
+    "i2p": {"label": "I2P", "scope": "Dark Web", "collector": "i2p_http", "supports_fetch": True},
+    "freenet": {"label": "Freenet", "scope": "Dark Web", "collector": "freenet_http", "supports_fetch": True},
     "gnunet": {"label": "Gnunet", "scope": "Dark Web", "collector": "gnunet_native", "supports_fetch": False},
     "riffle": {"label": "Riffle", "scope": "Dark Web", "collector": "riffle_native", "supports_fetch": False},
     "zeronet": {"label": "ZeroNet", "scope": "Dark Web", "collector": "zeronet_http", "supports_fetch": False},
@@ -33,6 +33,9 @@ NETWORK_HINTS = {
 }
 
 
+FREENET_KEY_PREFIXES = ("usk@", "ssk@", "chk@", "ksk@")
+
+
 def classify_network(url: str | None) -> str:
     if not url:
         return "unknown"
@@ -44,10 +47,13 @@ def classify_network(url: str | None) -> str:
 
     parsed = urlparse(url if "://" in url else f"https://{url}")
     host = (parsed.netloc or parsed.path).lower()
+    freenet_path = parsed.path.lstrip("/").lower()
     if ".onion" in host:
         return "tor"
     if ".i2p" in host:
         return "i2p"
+    if freenet_path.startswith(FREENET_KEY_PREFIXES):
+        return "freenet"
     if host:
         return "clearnet"
     return "unknown"

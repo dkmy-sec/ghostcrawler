@@ -4,6 +4,7 @@ import sqlite3
 from pathlib import Path
 
 from core.network_catalog import classify_network
+from core.url_intake import normalize_fetchable_url
 from core.utils import DATA_DIR, ENABLE_DEMO_CONTENT, ENABLE_SEED_CATALOG
 
 
@@ -53,16 +54,18 @@ def _ensure_column(conn: sqlite3.Connection, table_name: str, column_name: str, 
 
 def _seed_multi_network_sources(conn: sqlite3.Connection) -> None:
     for seed in MULTI_NETWORK_SEEDS:
+        intake = normalize_fetchable_url(seed["url"])
+        url = intake.normalized_url if intake.accepted else seed["url"]
         conn.execute(
             """
             INSERT OR IGNORE INTO onions (url, source, tag, network, collector, priority)
             VALUES (?, ?, ?, ?, ?, ?)
             """,
             (
-                seed["url"],
+                url,
                 seed.get("source", "seed_catalog"),
                 seed.get("tag", "unknown"),
-                seed.get("network") or classify_network(seed["url"]),
+                seed.get("network") or classify_network(url),
                 "seed_catalog",
                 "priority",
             ),

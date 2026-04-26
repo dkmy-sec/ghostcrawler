@@ -5,7 +5,6 @@ import re
 import sqlite3
 import sys
 from pathlib import Path
-from urllib.parse import urlsplit, urlunsplit
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
@@ -13,12 +12,14 @@ try:
     from core.connectors import get_connector_for_url, supports_fetch
     from core.intel_schema import ensure_database
     from core.network_catalog import classify_network
+    from core.url_intake import UrlIntakeSummary, normalize_fetchable_url
     from core.utils import DATA_DIR
 except ImportError:
     DATA_DIR = Path(__file__).parent.parent / "data"
     from connectors import get_connector_for_url, supports_fetch
     from intel_schema import ensure_database
     from network_catalog import classify_network
+    from url_intake import UrlIntakeSummary, normalize_fetchable_url
 
 
 DB_PATH = DATA_DIR / "onion_sources.db"
@@ -40,16 +41,7 @@ def get_connection():
 
 
 def normalize_crawl_url(url: str) -> str:
-    cleaned = (url or "").strip()
-    if not cleaned:
-        return cleaned
-    if cleaned.lower().startswith("https://") and ".onion" in cleaned.lower():
-        cleaned = "http://" + cleaned.split("://", 1)[1]
-    parts = urlsplit(cleaned)
-    normalized_path = parts.path or "/"
-    if normalized_path != "/" and normalized_path.endswith("/"):
-        normalized_path = normalized_path.rstrip("/")
-    return urlunsplit((parts.scheme, parts.netloc.lower(), normalized_path, parts.query, ""))
+    return normalize_fetchable_url(url).normalized_url or ""
 
 
 def snapshot_filename(url: str) -> str:
@@ -160,8 +152,20 @@ def persist_zero_day_signals(signals: list[dict]) -> None:
 
 
 def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
-    url = normalize_crawl_url(url)
-    network = classify_network(url)
+    intake = normalize_fetchable_url(url)
+    if not intake.accepted:
+        return {
+            "url": (url or "").strip(),
+            "network": intake.network,
+            "error": f"url rejected: {intake.reason}",
+            "skipped_reason": intake.reason,
+            "found_onions": [],
+            "found_links": [],
+            "skipped_links": {},
+        }
+
+    url = intake.normalized_url or ""
+    network = intake.network
     if not supports_fetch(url):
         return {
             "url": url,
@@ -169,6 +173,7 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
             "error": f"collector for {network} is not configured yet",
             "found_onions": [],
             "found_links": [],
+            "skipped_links": {},
         }
 
     connector = get_connector_for_url(url)
@@ -183,6 +188,7 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
                 "error": fetched.error,
                 "found_onions": [],
                 "found_links": [],
+                "skipped_links": {},
             }
         html = fetched.html or ""
 
@@ -221,11 +227,14 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
             )
 
             found_links = []
-            for full_url in fetched.links or []:
-                full_url = normalize_crawl_url(full_url)
-                if not full_url:
+            link_skips = UrlIntakeSummary()
+            for raw_link in fetched.links or []:
+                link_intake = normalize_fetchable_url(raw_link)
+                if not link_intake.accepted:
+                    link_skips.record(link_intake)
                     continue
-                child_network = classify_network(full_url)
+                full_url = link_intake.normalized_url or ""
+                child_network = link_intake.network
                 if full_url not in found_links:
                     found_links.append(full_url)
                 conn.execute(
@@ -242,7 +251,8 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
 
         if depth < max_depth:
             for link in found_links:
-                crawl_target(link, depth + 1, max_depth)
+                child_result = crawl_target(link, depth + 1, max_depth)
+                link_skips.add_counts(child_result.get("skipped_links", {}))
 
         return {
             "url": url,
@@ -251,18 +261,22 @@ def crawl_target(url: str, depth: int = 0, max_depth: int = 4) -> dict:
             "snapshot_file": filename,
             "found_onions": found_links,
             "found_links": found_links,
+            "skipped_links": link_skips.as_dict(),
             "zero_day_signals": len(zero_day_signals),
         }
     except Exception as exc:
         logging.error("Error crawling %s: %s", url, exc)
-        return {"url": url, "network": network, "error": str(exc), "found_onions": [], "found_links": []}
+        return {"url": url, "network": network, "error": str(exc), "found_onions": [], "found_links": [], "skipped_links": {}}
 
 
 def crawl_onion(url: str, depth: int = 0, max_depth: int = 4) -> dict:
     return crawl_target(url, depth=depth, max_depth=max_depth)
 
 
-def crawl_seed_batch(limit: int = 12, max_depth: int = 4) -> list[dict]:
+def crawl_seed_batch(limit: int = 12, max_depth: int = 4, *, return_summary: bool = False) -> list[dict] | tuple[list[dict], dict[str, int]]:
+    if limit <= 0:
+        return ([], {}) if return_summary else []
+    candidate_limit = max(limit * 10, limit + 100)
     with get_connection() as conn:
         rows = conn.execute(
             """
@@ -277,16 +291,36 @@ def crawl_seed_batch(limit: int = 12, max_depth: int = 4) -> list[dict]:
                 COALESCE(last_seen, CURRENT_TIMESTAMP) DESC
             LIMIT ?
             """,
-            (limit,),
+            (candidate_limit,),
         ).fetchall()
 
     results = []
+    seed_skips = UrlIntakeSummary()
+    seen = set()
     for (url,) in rows:
-        if supports_fetch(url):
-            results.append(crawl_target(url, depth=0, max_depth=max_depth))
+        intake = normalize_fetchable_url(url)
+        if not intake.accepted:
+            seed_skips.record(intake)
+            continue
+        normalized_url = intake.normalized_url or ""
+        if normalized_url in seen:
+            continue
+        seen.add(normalized_url)
+        crawl_result = crawl_target(normalized_url, depth=0, max_depth=max_depth)
+        seed_skips.add_counts(crawl_result.get("skipped_links", {}))
+        results.append(crawl_result)
+        if len(results) >= limit:
+            break
+
+    if return_summary:
+        return results, seed_skips.as_dict()
     return results
 
 
 if __name__ == "__main__":
-    batch = crawl_seed_batch()
+    from core.url_intake import format_skip_summary
+
+    batch, skipped = crawl_seed_batch(return_summary=True)
     print(f"[✓] Crawled {len(batch)} seed target(s).")
+    if skipped:
+        print(f"[i] Seed URL intake skipped: {format_skip_summary(skipped)}")

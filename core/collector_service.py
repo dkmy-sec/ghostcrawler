@@ -14,6 +14,7 @@ from core.crawler import crawl_seed_batch
 from core.frontier_crawl import frontier_crawl
 from core.intel_schema import DB_PATH, ensure_database
 from core.search_engine import build_index
+from core.url_intake import format_skip_summary
 
 
 LOG_LEVEL = os.getenv("GHOSTCRAWLER_LOG_LEVEL", "INFO").upper()
@@ -34,12 +35,21 @@ def run_cycle() -> None:
     added = sync_catalog()
     logging.info("Catalog sync complete. Added %s new seeds.", added)
 
-    batch_results = crawl_seed_batch(limit=SEED_BATCH_LIMIT, max_depth=SEED_BATCH_DEPTH)
+    batch_results, seed_skips = crawl_seed_batch(limit=SEED_BATCH_LIMIT, max_depth=SEED_BATCH_DEPTH, return_summary=True)
     successes = sum(1 for row in batch_results if not row.get("error"))
     logging.info("Seed batch finished. %s/%s successful crawls.", successes, len(batch_results))
+    if seed_skips:
+        logging.info("Seed URL intake skipped before/during crawl: %s", format_skip_summary(seed_skips))
 
     if ENABLE_FRONTIER:
-        frontier_crawl()
+        frontier_stats = frontier_crawl(emit_summary=False)
+        logging.info(
+            "Frontier crawl finished. fetched=%s enqueued=%s",
+            frontier_stats["fetched"],
+            frontier_stats["enqueued"],
+        )
+        if frontier_stats["skipped"]:
+            logging.info("Frontier URL intake skipped: %s", format_skip_summary(frontier_stats["skipped"]))
 
     build_index()
     stats = refresh_analyst_signals()

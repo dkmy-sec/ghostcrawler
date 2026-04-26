@@ -1,7 +1,7 @@
 requests
 PySocks
 beautifulsoup4~=4.13.4
-streamlit~=1.45.1
+streamlit~=1.56.0
 whoosh~=2.7.4
 matplotlib
 rich~=14.0.0

@@ -11,6 +11,7 @@ from urllib.parse import urlparse
 from core.utils import DATA_DIR
 from core.crawler import crawl_onion
 from core.safeguard import is_high_risk
+from core.url_intake import UrlIntakeSummary, format_skip_summary, normalize_fetchable_url
 
 DB = DATA_DIR / "onion_sources.db"
 
@@ -28,11 +29,18 @@ def host_of(u: str) -> str:
     except Exception:
         return ""
 
-def enqueue(cur, url, source="seed", depth=0):
+def enqueue(cur, url, source="seed", depth=0, skip_summary: UrlIntakeSummary | None = None) -> bool:
+    intake = normalize_fetchable_url(url)
+    if not intake.accepted:
+        if skip_summary is not None:
+            skip_summary.record(intake)
+        return False
+    normalized_url = intake.normalized_url or ""
     cur.execute("""
-        INSERT OR IGNORE INTO frontier(url, source, depth, status, tries)
-        VALUES (?, ?, ?, 'pending', 0)
-    """, (url, source, depth))
+        INSERT OR IGNORE INTO frontier(url, source, depth, status, tries, network)
+        VALUES (?, ?, ?, 'pending', 0, ?)
+    """, (normalized_url, source, depth, intake.network))
+    return cur.rowcount > 0
 
 def next_pending(cur):
     return cur.execute("""
@@ -50,10 +58,11 @@ def mark(cur, url, status):
 def inc_try(cur, url):
     cur.execute("UPDATE frontier SET tries = tries + 1 WHERE url=?", (url,))
 
-def frontier_crawl():
+def frontier_crawl(*, emit_summary: bool = True) -> dict:
     fetched = 0
     enqueued = 0
     per_host = {}
+    intake_skips = UrlIntakeSummary()
 
     with sqlite3.connect(DB) as conn:
         cur = conn.cursor()
@@ -61,10 +70,31 @@ def frontier_crawl():
         while fetched < MAX_TOTAL_PAGES:
             row = next_pending(cur)
             if not row:
-                print("[✓] No pending frontier items.")
+                if emit_summary:
+                    print("[✓] No pending frontier items.")
                 break
 
             url, depth, tries = row
+            intake = normalize_fetchable_url(url)
+            if not intake.accepted:
+                intake_skips.record(intake)
+                mark(cur, url, "skipped")
+                conn.commit()
+                continue
+
+            normalized_url = intake.normalized_url or ""
+            if normalized_url != url:
+                cur.execute(
+                    "UPDATE OR IGNORE frontier SET url=?, network=? WHERE url=?",
+                    (normalized_url, intake.network, url),
+                )
+                if cur.rowcount == 0:
+                    mark(cur, url, "skipped")
+                    conn.commit()
+                    continue
+                url = normalized_url
+                conn.commit()
+
             h = host_of(url)
 
             # host cap to prevent one site dominating
@@ -100,18 +130,23 @@ def frontier_crawl():
 
             # Success
             mark(cur, url, "done")
+            intake_skips.add_counts(result.get("skipped_links", {}))
 
             # Enqueue found onions (BFS expansion)
             for child in result.get("found_onions", []):
                 if enqueued >= MAX_NEW_ENQUEUE:
                     break
-                enqueue(cur, child, source=url, depth=depth + 1)
-                enqueued += 1
+                if enqueue(cur, child, source=url, depth=depth + 1, skip_summary=intake_skips):
+                    enqueued += 1
 
             conn.commit()
             time.sleep(SLEEP_BETWEEN)
 
-    print(f"[✓] Frontier crawl finished: fetched={fetched}, enqueued={enqueued}")
+    stats = {"fetched": fetched, "enqueued": enqueued, "skipped": intake_skips.as_dict()}
+    if emit_summary:
+        suffix = f", skipped={format_skip_summary(intake_skips)}" if intake_skips.skipped else ""
+        print(f"[✓] Frontier crawl finished: fetched={fetched}, enqueued={enqueued}{suffix}")
+    return stats
 
 if __name__ == "__main__":
     frontier_crawl()

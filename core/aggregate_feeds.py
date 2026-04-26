@@ -8,11 +8,13 @@ try:
     from core.crawler import classify_onion
     from core.intel_schema import DB_PATH, MULTI_NETWORK_SEEDS, ensure_database
     from core.network_catalog import classify_network, network_label
+    from core.url_intake import UrlIntakeSummary, format_skip_summary, normalize_fetchable_url
     from core.utils import DATA_DIR
 except ImportError:
     from crawler import classify_onion
     from intel_schema import DB_PATH, MULTI_NETWORK_SEEDS, ensure_database
     from network_catalog import classify_network, network_label
+    from url_intake import UrlIntakeSummary, format_skip_summary, normalize_fetchable_url
     from utils import DATA_DIR
 
 
@@ -25,10 +27,16 @@ def sync_catalog() -> int:
     SEED_TXT.touch(exist_ok=True)
     existing = set(SEED_TXT.read_text(encoding="utf-8").splitlines())
     inserted = 0
+    skipped = UrlIntakeSummary()
 
     with sqlite3.connect(DB_PATH) as conn:
         for seed in MULTI_NETWORK_SEEDS:
-            url = seed["url"]
+            intake = normalize_fetchable_url(seed["url"])
+            if intake.accepted:
+                url = intake.normalized_url or seed["url"].strip()
+            else:
+                skipped.record(intake)
+                url = seed["url"].strip()
             conn.execute(
                 """
                 INSERT OR IGNORE INTO onions (url, source, tag, network, collector, priority)
@@ -43,7 +51,7 @@ def sync_catalog() -> int:
                     "priority",
                 ),
             )
-            if url not in existing:
+            if intake.accepted and url not in existing:
                 with SEED_TXT.open("a", encoding="utf-8") as handle:
                     handle.write(url + "\n")
                 existing.add(url)
@@ -51,6 +59,8 @@ def sync_catalog() -> int:
                 print(f"[+] Added {network_label(classify_network(url))} seed: {url}")
 
         conn.commit()
+    if skipped.skipped:
+        print(f"[i] Catalog seed URL intake skipped for crawl file: {format_skip_summary(skipped)}")
     return inserted
 
 
