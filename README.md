@@ -9,7 +9,7 @@
 - Watchlist support for emails, keywords, and domains
 - Network-aware source catalog for Tor, I2P, Freenet, Gnunet, Riffle, and adjacent darknet connectors
 - Zero-day signal queue for exploit chatter, active-exploitation language, and critical-CVE mentions found in collected content
-- Dark-web source collection via Tor-based workflows already present in the repo
+- Live crawling via Tor SOCKS, I2P HTTP proxy routing, Freenet gateway routing, and direct clearnet HTTP
 - Local full-text search across indexed HTML snapshots
 - Exposure evidence review from the local `data_leaks` table
 - Streamlit dashboard with a professional threat-hunter layout
@@ -79,6 +79,18 @@ Launch the stack:
 docker compose up -d --build
 ```
 
+If Tor, I2P, and Freenet are running as separate routed services on your server, set these in `.env` so the collector can use them:
+
+```bash
+GHOSTCRAWLER_TOR_SOCKS_HOST=tor
+GHOSTCRAWLER_TOR_SOCKS_PORT=9050
+GHOSTCRAWLER_I2P_HTTP_PROXY=http://i2p:4444
+GHOSTCRAWLER_FREENET_GATEWAY_URL=http://freenet:8888
+GHOSTCRAWLER_CLEARNET_CROSS_HOST=false
+```
+
+`GHOSTCRAWLER_CLEARNET_CROSS_HOST=false` keeps clearnet crawling same-origin by default so a single seed does not fan out across the whole web. Set it to `true` only if you explicitly want cross-domain expansion.
+
 Open the dashboard on:
 
 ```text
@@ -101,6 +113,13 @@ docker compose logs -f tor
 docker compose restart collector
 ```
 
+Quick connector diagnostics from the collector runtime:
+
+```bash
+python -m core.check_connectors
+python -m core.check_connectors --tor-url http://examplehiddenservice.onion --i2p-url http://example.i2p --freenet-url freenet:USK@example/site/1 --clearnet-url https://example.com
+```
+
 If you want to put this behind Nginx or Caddy on your VPS, reverse proxy port `8501` and restrict public access with auth before exposing it more broadly.
 
 ---
@@ -121,9 +140,9 @@ supports: comma seperated emails, keywords, and dowmains
 ### Legal and Ethical Use
 This toolkit is for defensive security, authorized intelligence collection, and exposure monitoring only. Do not use it to access illegal content, retain data you are not authorized to store, or perform unauthorized collection against third-party systems.
 
-The multi-darknet catalog is intentionally connector-aware: Tor and clear-net HTTP collection work today, while Freenet, Gnunet, Riffle, ZeroNet, Lokinet, and similar ecosystems are tracked in the schema and dashboard so dedicated transport adapters can be added without rewriting the app.
+The multi-darknet catalog is intentionally connector-aware: Tor, I2P, Freenet, and clear-net HTTP collection work when their routed services are configured, while Gnunet, Riffle, ZeroNet, Lokinet, and similar ecosystems are still tracked in the schema and dashboard so dedicated transport adapters can be added without rewriting the app.
 
-For production deployments, the dashboard should be treated as an analyst console over collected telemetry, not as a promise that every listed darknet transport already has a live collector.
+For production deployments, the dashboard should still be treated as an analyst console over collected telemetry. Only the transports you actually route and configure should be considered fetch-ready.
 
 
 ---

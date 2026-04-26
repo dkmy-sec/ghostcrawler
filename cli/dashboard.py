@@ -1,5 +1,4 @@
 import json
-import re
 import sqlite3
 import subprocess
 import sys
@@ -8,14 +7,12 @@ from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import requests
 import streamlit as st
-from bs4 import BeautifulSoup
 from fpdf import FPDF
 
 sys.path.append(str(Path(__file__).resolve().parent.parent))
 
-from core.connectors import build_tor_session, connector_status_frame, supports_fetch
+from core.connectors import connector_status_frame, supports_fetch
 from core.crawler import crawl_onion
 from core.analyst_workbench import (
     add_case,
@@ -67,38 +64,8 @@ MAP_CLUSTERS = {
 ensure_database(DB_PATH)
 
 
-def get_tor_session():
-    return build_tor_session()
-
-
-session_tor = get_tor_session()
-session_web = requests.Session()
-
-
 def run_python(script_path: Path):
     return subprocess.run([sys.executable, str(script_path)], cwd=APP_ROOT, check=False)
-
-
-def process_url(url, session):
-    try:
-        response = session.get(url, timeout=15)
-        text = BeautifulSoup(response.text, "html.parser").get_text(" ", strip=True)
-        network = classify_network(url)
-        results = []
-        for email in re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text):
-            results.append(("email", email, text[text.find(email):text.find(email) + 50]))
-        for match in re.finditer(r"(?i)(api[_-]?key|apikey|secret|token)[\s:]*[\"']?([A-Za-z0-9\-._~+/]+=*)[\"']?", text):
-            results.append(("api_key", match.group(2), match.group(0)))
-        with sqlite3.connect(DB_PATH) as conn:
-            for leak_type, value, snippet in results:
-                conn.execute(
-                    "INSERT INTO data_leaks (url, leak_type, value, snippet, network) VALUES (?, ?, ?, ?, ?)",
-                    (url, leak_type, value, snippet, network),
-                )
-            conn.commit()
-        return {"status": "success", "url": url, "network": network}
-    except Exception as exc:
-        return {"status": "error", "url": url, "error": str(exc)}
 
 
 def get_connection():
@@ -347,10 +314,14 @@ st.sidebar.caption(f"Detected network: {network_label(seed_network)}")
 if st.sidebar.button("Harvest Target", width="stretch"):
     if not supports_fetch(seed_url):
         st.sidebar.warning(f"{network_label(seed_network)} needs a dedicated connector before live collection can run.")
-    elif seed_network == "tor":
-        process_url(seed_url, session_tor)
     else:
-        process_url(seed_url, session_web)
+        harvest_result = crawl_onion(seed_url, depth=0, max_depth=st.session_state.crawl_depth)
+        if harvest_result.get("error"):
+            st.sidebar.error(f"Harvest failed: {harvest_result['error']}")
+        else:
+            st.sidebar.success(
+                f"Harvested via {harvest_result.get('connector', 'collector')} with {len(harvest_result.get('found_links', []))} discovered link(s)."
+            )
 
 scoped_sources = apply_scope_filter(sources_df, scope)
 scoped_findings = apply_scope_filter(findings_df, scope)
